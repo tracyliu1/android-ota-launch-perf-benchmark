@@ -1,0 +1,6 @@
+# Minimal example app list for quick testing
+# Copy this to scripts/apps.txt as a starting point
+
+com.example.device.appstore/.news.presentation.activity.SplashActivity
+com.example.device.reader/.main.ui.MainActivity
+com.example.device.calculator/.MainActivity

@@ -1,0 +1,4 @@
+package,activity,t1,t2,t3,t4,t5,avg,status
+com.example.device.appstore,.news.presentation.activity.SplashActivity,1450,1280,1260,1250,1240,1296,ok
+com.example.device.reader,.main.ui.MainActivity,1120,980,970,960,955,997,ok
+com.example.device.calculator,.MainActivity,320,280,275,270,268,283,ok

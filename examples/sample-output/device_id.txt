@@ -1,0 +1,25 @@
+# Device identity for phase: P1_Demo
+# Captured at: 2026-06-05T10:00:00+0800
+
+## adb devices
+List of devices attached
+DemoSerialA	device
+
+## Build / model props
+ro.serialno = DemoSerialA
+ro.product.model = DemoDevice-A
+ro.product.brand = DemoBrand
+ro.product.device = DemoDevice
+ro.product.cpu.abi = arm64-v8a
+ro.build.version.release = 12
+ro.build.version.sdk = 31
+ro.build.fingerprint = DemoBrand/full_DemoDevice/DemoDevice:12/SP1A.210812.016/user/release-keys
+ro.boot.slot_suffix = _a
+ro.virtual_ab.enabled = true
+
+## Storage
+Filesystem      Size Used Avail Use% Mounted on
+/dev/block/dm-7 216G 915M  215G   1% /data
+
+## Uptime
+ 10:00:00 up 6 min,  0 users,  load average: 10.32, 9.86, 4.91

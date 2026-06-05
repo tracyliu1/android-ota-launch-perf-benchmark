@@ -1,0 +1,80 @@
+# Android OTA Launch Performance Benchmark — App List Template
+#
+# 每行格式: package/activity
+#   - package: 应用包名
+#   - activity: 启动的 Activity（可相对或绝对路径）
+#
+# 使用方式:
+#   1. 复制本文件为 apps.txt
+#   2. 替换为你的目标设备实际包名和 Activity
+#   3. 确保所有 app 在两个对比 ROM 上均存在（取包名交集）
+#
+# 建议数量: 30~60 个，覆盖核心业务场景
+
+# AOSP Launcher（am start -W 对此有特殊处理，数据可能异常，建议排除统计）
+com.android.launcher3/com.example.device.launcher.LauncherActivity
+
+# AI / 智能类
+com.example.device.aicommonknowledge/.MainActivity
+com.example.device.aibigreader/.ui.activity.MainActivity
+com.example.device.aidiagnosisplan/.ui.activity.MainActivity
+com.example.device.ailearningcourse/com.example.device.activity.LauncherXWPY
+com.example.device.aioralpractice/.home.activity.SplashActivity
+com.example.device.airadio/.activity.SplashActivity
+com.example.device.aisearch/.mainpage.presentation.ui.MainActivity
+
+# 工具 / 基础服务
+com.example.device.app.precision.exercise/.MainActivity
+com.example.device.app.incentive/.ui.MainActivity
+com.example.device.appstore/.news.presentation.activity.SplashActivity
+com.example.device.calculator/.MainActivity
+com.example.device.cloudfile/.main.MainActivity
+com.example.device.radio/.main.MainActivity
+com.example.device.voiceassistant/.llm.ui.presentation.activity.ChatActivity
+
+# 学习 / 教育核心
+com.example.device.checkhomework/.scheme.SplashActivity
+com.example.device.chinesepass/.SplashActivity
+com.example.device.englishpass/.SplashActivity
+com.example.device.learningplan/.main.MainActivity
+com.example.device.smarteye.qa/.app.SplashActivity
+com.example.device.knowledgecourse/.ui.home.SplashActivity
+com.example.device.oralcalculation/.presentation.activity.SplashActivity
+com.example.device.oralcalculationgame/.ui.page.map.GameMapActivity
+com.example.device.oralpractice/.splash.SplashActivity
+com.example.device.reader/.main.ui.MainActivity
+
+# 语文 / 国学
+com.example.device.ancientpoems/com.example.device.activity.SplashActivity
+com.example.device.character/com.example.device.activity.SplashActivity
+com.example.device.chinesecorrect/.activity.SplashActivity
+com.example.device.recitebook/com.example.device.activity.SplashActivity
+com.example.device.recitewords/com.example.device.activity.SplashActivity
+com.example.device.synchronouschinese/com.example.device.synchronous.launcher.SplashActivity
+com.example.device.synchronousenglish/com.example.device.synchronous.launcher.SplashActivity
+com.example.device.synchronouspractice/.presentation.activity.SplashActivity
+
+# 英语
+com.example.device.englishcorrect/.activity.EnglishSplashActivity
+com.example.device.englishwordchallengegame/.ui.page.map.GameMapActivity
+com.example.device.englishwordsnote/.presentation.view.WordsNoteNewHomeActivity
+com.example.device.learnenglishwords/com.example.device.activity.SplashActivity
+com.example.device.learnwords/com.example.device.activity.SplashActivity
+
+# 数学 / 思维
+com.example.device.errorsbook/.home.activity.SplashActivity
+com.example.device.goldmedalpreparation/com.example.device.activity.SplashActivity
+com.example.device.goldtutor/.MainActivity
+com.example.device.learningwebsite/.SplashActivity
+com.example.device.puzzlegame/.ui.activity.MainActivity
+
+# 健康 / 辅助
+com.example.device.eyecare/.ui.HomeActivity
+com.example.device.smarteye/.fingersearch.fingerpage.presentation.view.FingerActivity
+
+# 综合
+com.example.device.wnb/.pages.main.MainActivity
+
+# 子品牌 / 特色模块
+com.example.device.yaya.english/com.example.device.yaya.main.ui.MainActivity
+com.example.device.yaya.math/com.example.device.yaya.main.ui.MainActivity

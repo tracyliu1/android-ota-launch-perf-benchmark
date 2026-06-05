@@ -1,0 +1,4 @@
+pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,oat_odex_mtime,oat_vdex_size,oat_vdex_mtime,profile_size,profile_mtime
+"com.example.device.appstore","yes","arm64","verify","prebuilt","/system/app/appstore/appstore.apk","205744","1778833877","510916","1778833877","",""
+"com.example.device.reader","yes","arm64","verify","prebuilt","/system/app/reader/reader.apk","250808","1778833876","653012","1778833876","",""
+"com.example.device.calculator","yes","arm64","verify","prebuilt","/system/app/calculator/calculator.apk","181176","1778833877","447592","1778833877","",""

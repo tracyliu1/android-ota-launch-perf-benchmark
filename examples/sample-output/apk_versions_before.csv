@@ -1,0 +1,4 @@
+pkg,installed,versionCode,versionName,firstInstallTime,lastUpdateTime,codePath,primaryCpuAbi
+"com.example.device.appstore","yes","5060002","6.0.2","2009-01-01 08:00:00","2009-01-01 08:00:00","/system/app/appstore","arm64-v8a"
+"com.example.device.reader","yes","5050202","5.2.2","2009-01-01 08:00:00","2009-01-01 08:00:00","/system/app/reader","arm64-v8a"
+"com.example.device.calculator","yes","5050002","5.0.2","2009-01-01 08:00:00","2009-01-01 08:00:00","/system/app/calculator","arm64-v8a"
