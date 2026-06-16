@@ -2,3 +2,13 @@ __pycache__/
 *.pyc
 .DS_Store
 *.log
+
+# Local runtime configuration and generated evidence
+scripts/config.sh
+scripts/apps*.txt
+!scripts/apps.template.txt
+evidence/
+reports/
+notes/
+.timeline_*.csv
+.timeline_sampler_*.pid

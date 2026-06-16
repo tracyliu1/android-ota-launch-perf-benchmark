@@ -39,27 +39,32 @@ log_info "==== 02_dump_dexopt_state.sh phase=$PHASE suffix=$SUFFIX ===="
         pkg="${line%%/*}"
 
         raw_out="$RAW_DIR/${pkg}.txt"
-        adb shell "dumpsys package $pkg" > "$raw_out" 2>/dev/null || {
+        adb shell "dumpsys package $pkg" </dev/null > "$raw_out" 2>/dev/null || {
             echo "\"$pkg\",no,,,,,,,,,,"
             continue
         }
 
         info=$(cat "$raw_out")
 
-        # 解析 compiler filter
-        # Android12 典型输出: [compiler filter: verify]
-        filter=$(echo "$info" | grep -m1 '\[.*compiler filter:' | sed -n 's/.*compiler filter: \([^]]*\)\].*/\1/p' | tr -d '[:space:]')
-        [ -z "$filter" ] && filter=$(echo "$info" | grep -m1 'compilerFilter=' | sed -n 's/.*compilerFilter=\([^[:space:]]*\).*/\1/p')
+        # 解析 compiler filter/status。
+        # Android12 常见: [compiler filter: verify]
+        # Android14 常见: arm64: [status=verify] [reason=prebuilt]
+        filter=$(echo "$info" | grep -m1 '\[.*compiler filter:' | sed -n 's/.*compiler filter: \([^]]*\)\].*/\1/p' | tr -d '[:space:]' || true)
+        [ -z "$filter" ] && filter=$(echo "$info" | grep -m1 'compilerFilter=' | sed -n 's/.*compilerFilter=\([^[:space:]]*\).*/\1/p' || true)
+        [ -z "$filter" ] && filter=$(echo "$info" | grep -m1 '\[status=' | sed -n 's/.*\[status=\([^]]*\)\].*/\1/p' || true)
 
         # 解析 reason
-        reason=$(echo "$info" | grep -m1 'reason:' | sed -n 's/.*reason: \([^[:space:]]*\).*/\1/p')
+        reason=$(echo "$info" | grep -m1 'reason:' | sed -n 's/.*reason: \([^[:space:]]*\).*/\1/p' || true)
+        [ -z "$reason" ] && reason=$(echo "$info" | grep -m1 '\[reason=' | sed -n 's/.*\[reason=\([^]]*\)\].*/\1/p' || true)
 
         # 解析 base apk 路径
-        base_apk=$(echo "$info" | grep -m1 'baseDir=' | sed -n 's/.*baseDir=\([^[:space:]]*\).*/\1/p')
-        [ -z "$base_apk" ] && base_apk=$(echo "$info" | grep -m1 'codePath=' | sed -n 's/.*codePath=\([^[:space:]]*\).*/\1/p')
+        base_apk=$(echo "$info" | grep -m1 '^[[:space:]]*path: ' | sed -n 's/^[[:space:]]*path: //p' || true)
+        [ -z "$base_apk" ] && base_apk=$(echo "$info" | grep -m1 'baseDir=' | sed -n 's/.*baseDir=\([^[:space:]]*\).*/\1/p' || true)
+        [ -z "$base_apk" ] && base_apk=$(echo "$info" | grep -m1 'codePath=' | sed -n 's/.*codePath=\([^[:space:]]*\).*/\1/p' || true)
 
         # isa (通常为 arm64)
-        isa=$(echo "$info" | grep -m1 'primaryCpuAbi=' | sed -n 's/.*primaryCpuAbi=\([^[:space:]]*\).*/\1/p')
+        isa=$(echo "$info" | grep -m1 ': \[status=' | sed -n 's/^[[:space:]]*\([^:]*\):.*/\1/p' || true)
+        [ -z "$isa" ] && isa=$(echo "$info" | grep -m1 'primaryCpuAbi=' | sed -n 's/.*primaryCpuAbi=\([^[:space:]]*\).*/\1/p' || true)
 
         # odex/vdex 信息 (从 dexopt 指令行中提取)
         odex_size=""
@@ -75,20 +80,31 @@ log_info "==== 02_dump_dexopt_state.sh phase=$PHASE suffix=$SUFFIX ===="
             oat_dir=$(echo "$oat_line" | sed -n 's/.*oatDir=\([^[:space:]]*\).*/\1/p')
             if [ -n "$oat_dir" ]; then
                 # 尝试 ls -l 获取文件信息
-                oat_info=$(adb shell "ls -l ${oat_dir}/${isa:-arm64}/" 2>/dev/null || true)
-                odex_size=$(echo "$oat_info" | grep '\.odex' | awk 'NR==1 {print $5}')
-                odex_mtime=$(echo "$oat_info" | grep '\.odex' | awk 'NR==1 {print $6" "$7" "$8}')
-                vdex_size=$(echo "$oat_info" | grep '\.vdex' | awk 'NR==1 {print $5}')
-                vdex_mtime=$(echo "$oat_info" | grep '\.vdex' | awk 'NR==1 {print $6" "$7" "$8}')
+                oat_info=$(adb shell "ls -l ${oat_dir}/${isa:-arm64}/" </dev/null 2>/dev/null || true)
+                odex_size=$(echo "$oat_info" | grep '\.odex' | awk 'NR==1 {print $5}' || true)
+                odex_mtime=$(echo "$oat_info" | grep '\.odex' | awk 'NR==1 {print $6" "$7}' || true)
+                vdex_size=$(echo "$oat_info" | grep '\.vdex' | awk 'NR==1 {print $5}' || true)
+                vdex_mtime=$(echo "$oat_info" | grep '\.vdex' | awk 'NR==1 {print $6" "$7}' || true)
             fi
         fi
 
+        # Android14 dumpsys may give the concrete artifact path as:
+        #   [location is /system/app/foo/oat/arm64/foo.odex]
+        odex_path=$(echo "$info" | grep -m1 '\[location is .*\.odex\]' | sed -n 's/.*\[location is \([^]]*\.odex\)\].*/\1/p' || true)
+        if [ -n "$odex_path" ] && [ -z "$odex_size" ]; then
+            odex_info=$(adb shell "ls -l $odex_path ${odex_path%.odex}.vdex 2>/dev/null" </dev/null || true)
+            odex_size=$(echo "$odex_info" | grep '\.odex' | awk 'NR==1 {print $5}' || true)
+            odex_mtime=$(echo "$odex_info" | grep '\.odex' | awk 'NR==1 {print $6" "$7}' || true)
+            vdex_size=$(echo "$odex_info" | grep '\.vdex' | awk 'NR==1 {print $5}' || true)
+            vdex_mtime=$(echo "$odex_info" | grep '\.vdex' | awk 'NR==1 {print $6" "$7}' || true)
+        fi
+
         # profile 信息
-        prof_dir=$(adb shell "ls -d /data/misc/profiles/ref/$pkg 2>/dev/null" || true)
+        prof_dir=$(adb shell "ls -d /data/misc/profiles/ref/$pkg 2>/dev/null" </dev/null || true)
         if [ -n "$prof_dir" ]; then
-            prof_info=$(adb shell "ls -l /data/misc/profiles/ref/$pkg/ 2>/dev/null" || true)
-            profile_size=$(echo "$prof_info" | grep '\.prof' | awk 'NR==1 {print $5}')
-            profile_mtime=$(echo "$prof_info" | grep '\.prof' | awk 'NR==1 {print $6" "$7" "$8}')
+            prof_info=$(adb shell "ls -l /data/misc/profiles/ref/$pkg/ 2>/dev/null" </dev/null || true)
+            profile_size=$(echo "$prof_info" | grep '\.prof' | awk 'NR==1 {print $5}' || true)
+            profile_mtime=$(echo "$prof_info" | grep '\.prof' | awk 'NR==1 {print $6" "$7}' || true)
         fi
 
         printf '"%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s","%s"\n' \

@@ -6,7 +6,7 @@
 #
 # 行为:
 #   1. 读取 config.sh 中的 APP_LIST_FILE / LAUNCH_COUNT / LAUNCH_INTERVAL
-#   2. 对每个 app: force-stop → am start -W (循环 c 次，间隔 s 秒)
+#   2. 对每个 app: 每轮 force-stop → am start -W (循环 c 次，间隔 s 秒)
 #   3. 解析 TotalTime，输出 CSV + XLSX（若 openpyxl 可用）
 #   4. 记录 started_at / ended_at 到 launch_window.txt
 #
@@ -104,22 +104,22 @@ while IFS= read -r line || [ -n "$line" ]; do
 
     log_info "[$line_no/$n_apps] $pkg (activity=$act)"
 
-    # force-stop
-    adb shell "am force-stop $pkg" >/dev/null 2>&1 || true
-    sleep 1
-
     times=()
     status="ok"
     for i in $(seq 1 $COUNT); do
         t=-1
+        # 每一轮都重新 force-stop，确保 t1..tN 是同一口径的冷启动样本。
+        adb shell "am force-stop $pkg" </dev/null >/dev/null 2>&1 || true
+        sleep 1
+
         # am start -W 输出 TotalTime: xxx
-        out=$(adb shell "am start -W -n ${pkg}/${act}" 2>&1) || {
+        out=$(adb shell "am start -W -n ${pkg}/${act}" </dev/null 2>&1) || {
             log_warn "  am start failed for $pkg (attempt $i)"
             status="ERROR"
             times+=(-1)
             continue
         }
-        t=$(echo "$out" | grep -m1 '^TotalTime:' | awk '{print $2}')
+        t=$(echo "$out" | awk '/^TotalTime:/ {print $2; exit}' || true)
         if [ -z "$t" ] || ! [[ "$t" =~ ^[0-9]+$ ]]; then
             log_warn "  Cannot parse TotalTime for $pkg (attempt $i). Output was:"
             echo "$out" | sed 's/^/    /' >&2

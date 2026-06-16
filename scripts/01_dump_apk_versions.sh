@@ -33,18 +33,18 @@ log_info "==== 01_dump_apk_versions.sh phase=$PHASE suffix=$SUFFIX ===="
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         pkg="${line%%/*}"
 
-        info=$(adb shell "dumpsys package $pkg" 2>/dev/null) || {
+        info=$(adb shell "dumpsys package $pkg" </dev/null 2>/dev/null) || {
             echo "\"$pkg\",no,,,,,,,"
             continue
         }
 
         installed="yes"
-        versionCode=$(echo "$info" | grep -m1 'versionCode=' | head -1 | sed -n 's/.*versionCode=\([0-9]*\).*/\1/p')
-        versionName=$(echo "$info" | grep -m1 'versionName=' | head -1 | sed -n 's/.*versionName=\([^[:space:]]*\).*/\1/p')
-        firstInstallTime=$(echo "$info" | grep -m1 'firstInstallTime=' | head -1 | sed -n 's/.*firstInstallTime=\([^[:space:]]*\).*/\1/p')
-        lastUpdateTime=$(echo "$info" | grep -m1 'lastUpdateTime=' | head -1 | sed -n 's/.*lastUpdateTime=\([^[:space:]]*\).*/\1/p')
-        codePath=$(echo "$info" | grep -m1 'codePath=' | head -1 | sed -n 's/.*codePath=\([^[:space:]]*\).*/\1/p')
-        primaryCpuAbi=$(echo "$info" | grep -m1 'primaryCpuAbi=' | head -1 | sed -n 's/.*primaryCpuAbi=\([^[:space:]]*\).*/\1/p')
+        versionCode=$(echo "$info" | sed -n 's/.*versionCode=\([0-9]*\).*/\1/p' | sed -n '1p' || true)
+        versionName=$(echo "$info" | sed -n 's/.*versionName=\([^[:space:]]*\).*/\1/p' | sed -n '1p' || true)
+        firstInstallTime=$(echo "$info" | sed -n 's/.*firstInstallTime=\([^[:space:]]*\).*/\1/p' | sed -n '1p' || true)
+        lastUpdateTime=$(echo "$info" | sed -n 's/.*lastUpdateTime=\([^[:space:]]*\).*/\1/p' | sed -n '1p' || true)
+        codePath=$(echo "$info" | sed -n 's/.*codePath=\([^[:space:]]*\).*/\1/p' | sed -n '1p' || true)
+        primaryCpuAbi=$(echo "$info" | sed -n 's/.*primaryCpuAbi=\([^[:space:]]*\).*/\1/p' | sed -n '1p' || true)
 
         printf '"%s","%s","%s","%s","%s","%s","%s","%s"\n' \
             "$pkg" "$installed" "${versionCode:-}" "${versionName:-}" \

@@ -16,7 +16,7 @@
 - 可复现的冷启动测试脚本（`am start -W`）
 - 设备系统状态采集（CPU、内存、负载、I/O）
 - dexopt 编译状态追踪（filter / odex / vdex）
-- 完整的 5-Phase 对比实验设计
+- 完整的 5-Test 对比实验设计
 
 最终将这些积累汇总为一套**可复用的开源测试工具**。
 
@@ -65,28 +65,13 @@ cp apps.template.txt apps.txt
 # 编辑 config.sh（通常只需确认 DEVICE_SERIAL 和 APP_LIST_FILE）
 ```
 
-### 4. 执行单 Phase 测试
+### 4. 执行单轮测试
+
+推荐使用 `T` 开头的测试编号，例如 `T1_Demo`、`T2_OTA_Immediate`。`--phase` 参数只是输出目录标签，建议统一使用 `T*` 命名，避免和历史文档中的 P 编号混淆。
 
 ```bash
-# 1. 环境检查 + 设备身份归档
-bash 00_env_check.sh --phase P1_Demo
-
-# 2. 启动系统监控
-bash 03_timeline_sampler.sh --phase P1_Demo --start
-
-# 3. 测试前快照
-bash 01_dump_apk_versions.sh --phase P1_Demo --suffix before
-bash 02_dump_dexopt_state.sh --phase P1_Demo --suffix before
-
-# 4. 运行启动测试（每个 App 启动 5 次，间隔 10 秒）
-bash 05_run_launch_test.sh --phase P1_Demo
-
-# 5. 测试后快照
-bash 02_dump_dexopt_state.sh --phase P1_Demo --suffix after
-
-# 6. 停止监控并归档
-bash 03_timeline_sampler.sh --phase P1_Demo --stop
-bash lib_common.sh archive P1_Demo
+# 一键完成：环境检查、APK 版本、dexopt before/after、timeline、启动测试、归档
+bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 ```
 
 ### 5. 分析
@@ -154,15 +139,15 @@ adb shell dumpsys battery | grep -E "AC powered|USB powered|level"
 
 ## 推荐实验设计
 
-### 5-Phase 对比矩阵
+### 5-Test 对比矩阵
 
 | 代号 | 设备 | ROM | 测试时机 | 业务含义 |
 |------|------|-----|---------|---------|
-| **P1** | A | vOld（线刷）| 线刷后立即 | 升级前基线 |
-| **P2** | A | vNew（OTA）| OTA reboot 后立即 | **复现"OTA 后慢"的场景** |
-| **P3** | A | vNew（OTA）| OTA 后稳态（≥72h）| OTA 路径稳态 |
-| **P4** | B | vNew（线刷）| 线刷后立即 | 线刷路径立即态 |
-| **P5** | B | vNew（线刷）| 线刷后稳态（≥72h）| 线刷路径稳态 |
+| **T1** | A | vOld（线刷）| 线刷后立即 | 升级前基线 |
+| **T2** | A | vNew（OTA）| OTA reboot 后立即 | **复现"OTA 后慢"的场景** |
+| **T3** | A | vNew（OTA）| OTA 后稳态（≥72h）| OTA 路径稳态 |
+| **T4** | B | vNew（线刷）| 线刷后立即 | 线刷路径立即态 |
+| **T5** | B | vNew（线刷）| 线刷后稳态（≥72h）| 线刷路径稳态 |
 
 > **设备要求**：A、B 两台必须是**同型号、同批次**的设备，以控制硬件变量。
 
@@ -170,9 +155,9 @@ adb shell dumpsys battery | grep -E "AC powered|USB powered|level"
 
 | 对比组 | 控制变量 | 回答的问题 | 数据用法 |
 |--------|---------|-----------|---------|
-| **组 1**：P1 → P2 → P3 | 同 A 设备、同 OTA 路径 | 升级带来的整体变化 | 看趋势：瞬态 → 稳态 |
-| **组 2**：P2 vs P4 | 同 vNew、同立即时机、不同路径 | OTA 瞬态成本 vs 线刷瞬态成本 | **支持/反驳"OTA 更慢"的感受** |
-| **组 3**：P3 vs P5 | 同 vNew、同稳态时机、不同路径 | OTA 稳态是否真的追平线刷稳态 | **反驳"OTA ROM 有问题"的核心证据** |
+| **组 1**：T1 → T2 → T3 | 同 A 设备、同 OTA 路径 | 升级带来的整体变化 | 看趋势：瞬态 → 稳态 |
+| **组 2**：T2 vs T4 | 同 vNew、同立即时机、不同路径 | OTA 瞬态成本 vs 线刷瞬态成本 | **支持/反驳"OTA 更慢"的感受** |
+| **组 3**：T3 vs T5 | 同 vNew、同稳态时机、不同路径 | OTA 稳态是否真的追平线刷稳态 | **反驳"OTA ROM 有问题"的核心证据** |
 
 ---
 
@@ -197,10 +182,11 @@ HAS_VAB=true                  # 设备是否使用 VAB 分区
 |------|------|---------|
 | `00_env_check.sh` | 实验前环境检查 + 设备身份归档 | 通用 |
 | `01_dump_apk_versions.sh` | 采集 APK versionCode / versionName | 通用 |
-| `02_dump_dexopt_state.sh` | 采集 dexopt filter / odex / vdex 状态 | `[Android12]` dumpsys 格式可能因版本而异 |
+| `02_dump_dexopt_state.sh` | 采集 dexopt filter / odex / vdex 状态 | 支持常见 Android 12/14 dumpsys 格式 |
 | `03_timeline_sampler.sh` | Host 端轮询系统负载（每 30s） | 通用 |
 | `04_logcat_recorder.sh` | Logcat 滚动录制 | 通用 |
 | `05_run_launch_test.sh` | 内置 `am start -W` 启动测试循环 | 通用 |
+| `06_run_phase_with_timeline.sh` | 单轮测试 wrapper，绑定 timeline 生命周期并自动归档 | 通用 |
 | `lib_common.sh` | 公共函数库 + 归档校验 | 通用 |
 
 ### 数据采集详情
@@ -229,7 +215,7 @@ HAS_VAB=true                  # 设备是否使用 VAB 分区
 | `oat_odex_size` / `oat_vdex_size` | `ls -l <oatDir>/<isa>/` | 判断预编译产物是否存在 |
 | `profile_size` | `ls -l /data/misc/profiles/ref/<pkg>/` | 判断运行时 profile 是否生成 |
 
-- **采集时机**：每个 Phase 测试前、测试后各一次
+- **采集时机**：每轮测试前、测试后各一次
 - **为什么重要**：OTA 后常见的"慢"直接原因是 `run-from-apk`（无 odex/vdex），这个脚本提供**冒烟枪证据**
 
 #### 3. APK 版本快照（`01_dump_apk_versions.sh`）
@@ -239,7 +225,7 @@ HAS_VAB=true                  # 设备是否使用 VAB 分区
 | `versionCode` / `versionName` | 排除"同一个包名但版本不同"导致的启动时间差异 |
 | `codePath` | 确认 App 安装在 system 分区还是 data 分区 |
 
-- **采集时机**：每个 Phase 测试前一次
+- **采集时机**：每轮测试前一次
 - **为什么重要**：OTA 通常会同步升级预装 App，如果不记录 versionCode，就无法区分"ROM 差异"和"App 版本差异"
 
 #### 4. 设备身份归档（`00_env_check.sh`）
@@ -262,21 +248,21 @@ HAS_VAB=true                  # 设备是否使用 VAB 分区
   - dex2oat 触发记录（`dex2oat` / `BackgroundDexOptService` 日志）
   - App 启动异常（crash、ANR）
 
-### 多 Phase 连续采集（如 P2 → P3）
+### 多轮连续采集（如 T2 → T3）
 
-P2 测试完成后，**不要停止 timeline**，让设备继续充电+灭屏进入稳态，等 P3 测试时 timeline 仍在跑：
+T2 测试完成后，**不要停止 timeline**，让设备继续充电+灭屏进入稳态，等 T3 测试时 timeline 仍在跑：
 
 ```bash
-# P2 阶段
-bash 05_run_launch_test.sh --phase P2_A
-bash lib_common.sh archive P2_A --skip-timeline --skip-logcat
+# T2 阶段
+bash 05_run_launch_test.sh --phase T2_A
+bash lib_common.sh archive T2_A --skip-timeline --skip-logcat
 
 # 设备插电+灭屏，等待稳态（≥72h）
 
-# P3 阶段（timeline 继续）
-bash 05_run_launch_test.sh --phase P3_A
+# T3 阶段（timeline 继续）
+bash 05_run_launch_test.sh --phase T3_A
 bash 03_timeline_sampler.sh --phase A_continuous --stop
-bash lib_common.sh split-continuous A_continuous --into P2_A P3_A
+bash lib_common.sh split-continuous A_continuous --into T2_A T3_A
 ```
 
 ---
@@ -306,27 +292,27 @@ pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,...
 
 ### 3. 数据分析框架
 
-拿到 5 Phase 数据后，按以下框架分析：
+拿到 5 轮测试数据后，按以下框架分析：
 
 **启动耗时**：
-- 计算每 Phase 的"第 1 次启动"均值、"5 次平均"均值
+- 计算每轮测试的"第 1 次启动"均值、"5 次平均"均值
 - 计算三组核心 Δ（组 1/2/3）
 - 计算每 App 的 CV%，稳态期 CV 应 < 5%
 
 **dexopt 归因**（关键）：
-- 对比 P2 和 P4 的 `filter` 分布
-- 若 P2 出现 `run-from-apk` 而 P4 没有 → OTA 瞬态缺少预编译产物
-- 追踪这些 App 到 P3，看是否升级为 `verify`/`speed-profile` → 证明瞬态自愈
+- 对比 T2 和 T4 的 `filter` 分布
+- 若 T2 出现 `run-from-apk` 而 T4 没有 → OTA 瞬态缺少预编译产物
+- 追踪这些 App 到 T3，看是否升级为 `verify`/`speed-profile` → 证明瞬态自愈
 
 **Timeline 负载**：
-- 查看 P2 测试期前 5 分钟的 `iowait_pct`
-- 若出现 5~20% 峰值而 P1/P4 同时段为 0 → VAB merge 或 dexopt 抢占 I/O
+- 查看 T2 测试期前 5 分钟的 `iowait_pct`
+- 若出现 5~20% 峰值而 T1/T4 同时段为 0 → VAB merge 或 dexopt 抢占 I/O
 
 ---
 
 ## 已知限制
 
-1. **dexopt 解析基于 Android 12**：`02_dump_dexopt_state.sh` 中的 `dumpsys package` 解析逻辑基于 Android 12 (API 31)。在 Android 13/14/15 上，dexopt 输出格式可能略有差异，若解析失败需根据实际输出调整 `grep` / `sed` 模式。
+1. **dexopt 输出格式因 Android 版本而异**：`02_dump_dexopt_state.sh` 已兼容常见 Android 12/14 `dumpsys package` 格式；若新平台解析失败，需根据实际输出补充 `grep` / `sed` 模式。
 
 2. **merge_status 依赖设备命令**：`03_timeline_sampler.sh` 中的 `merge_status` 字段依赖 `cmd update_engine merge_status`。部分设备不支持此命令，不支持时该列会显示 `UNKNOWN`，不影响其他字段采集。
 
@@ -367,7 +353,8 @@ android-ota-launch-perf-benchmark/
 │   ├── 02_dump_dexopt_state.sh
 │   ├── 03_timeline_sampler.sh
 │   ├── 04_logcat_recorder.sh
-│   └── 05_run_launch_test.sh
+│   ├── 05_run_launch_test.sh
+│   └── 06_run_phase_with_timeline.sh
 └── examples/
     ├── sample-apps.txt        # 极简 App 列表示例
     └── sample-output/         # 输出格式示例（CSV）

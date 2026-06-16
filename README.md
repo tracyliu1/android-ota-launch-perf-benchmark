@@ -32,7 +32,7 @@ To independently verify this claim, we gradually built up:
 - Reproducible cold-start test scripts (`am start -W`)
 - Device system state collection (CPU, memory, load, I/O)
 - dexopt compilation state tracking (filter / odex / vdex)
-- A complete 5-Phase comparative experiment design
+- A complete 5-Test comparative experiment design
 
 These accumulations were eventually packaged into a **reusable open-source testing toolkit**.
 
@@ -67,28 +67,13 @@ cp apps.template.txt apps.txt
 # Edit config.sh (usually just confirm DEVICE_SERIAL and APP_LIST_FILE)
 ```
 
-### 4. Run a Single Phase
+### 4. Run a Single Test
+
+Use `T`-prefixed test IDs such as `T1_Demo` or `T2_OTA_Immediate`. The `--phase` argument is the output label; using `T*` labels keeps new runs distinct from older P-based examples.
 
 ```bash
-# 1. Environment check + device identity archive
-bash 00_env_check.sh --phase P1_Demo
-
-# 2. Start system monitoring
-bash 03_timeline_sampler.sh --phase P1_Demo --start
-
-# 3. Pre-test snapshots
-bash 01_dump_apk_versions.sh --phase P1_Demo --suffix before
-bash 02_dump_dexopt_state.sh --phase P1_Demo --suffix before
-
-# 4. Run launch test (5 launches per App, 10s interval)
-bash 05_run_launch_test.sh --phase P1_Demo
-
-# 5. Post-test snapshot
-bash 02_dump_dexopt_state.sh --phase P1_Demo --suffix after
-
-# 6. Stop monitoring and archive
-bash 03_timeline_sampler.sh --phase P1_Demo --stop
-bash lib_common.sh archive P1_Demo
+# One command for env check, APK versions, dexopt before/after, timeline, launch test, and archive
+bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 ```
 
 ### 5. Analyze
@@ -156,15 +141,15 @@ Pass criteria:
 
 ## Recommended Experiment Design
 
-### The 5-Phase Matrix
+### The 5-Test Matrix
 
 | ID | Device | ROM | Timing | Meaning |
 |----|--------|-----|--------|---------|
-| P1 | A | vOld (flash) | Immediately after flash | Pre-upgrade baseline |
-| P2 | A | vNew (OTA) | ~3 min after OTA reboot | **Reproduce the "OTA is slow" scenario** |
-| P3 | A | vNew (OTA) | Steady state (≥72h) | OTA path steady state |
-| P4 | B | vNew (flash) | Immediately after flash | Flash path immediate state |
-| P5 | B | vNew (flash) | Steady state (≥72h) | Flash path steady state |
+| T1 | A | vOld (flash) | Immediately after flash | Pre-upgrade baseline |
+| T2 | A | vNew (OTA) | ~3 min after OTA reboot | **Reproduce the "OTA is slow" scenario** |
+| T3 | A | vNew (OTA) | Steady state (≥72h) | OTA path steady state |
+| T4 | B | vNew (flash) | Immediately after flash | Flash path immediate state |
+| T5 | B | vNew (flash) | Steady state (≥72h) | Flash path steady state |
 
 > **Hardware requirement**: Devices A and B must be **same model, same batch** to control hardware variables.
 
@@ -172,9 +157,9 @@ Pass criteria:
 
 | Group | Controlled Variables | Question Answered |
 |-------|---------------------|-------------------|
-| **Group 1**: P1 → P2 → P3 | Same device A, same OTA path | Overall upgrade effect |
-| **Group 2**: P2 vs P4 | Same vNew, same immediate timing, different path | OTA transient cost vs flash transient cost |
-| **Group 3**: P3 vs P5 | Same vNew, same steady timing, different path | Does OTA steady state catch up with flash? |
+| **Group 1**: T1 → T2 → T3 | Same device A, same OTA path | Overall upgrade effect |
+| **Group 2**: T2 vs T4 | Same vNew, same immediate timing, different path | OTA transient cost vs flash transient cost |
+| **Group 3**: T3 vs T5 | Same vNew, same steady timing, different path | Does OTA steady state catch up with flash? |
 
 ---
 
@@ -199,10 +184,11 @@ HAS_VAB=true                  # Whether device uses VAB partitions
 |--------|---------|---------------|
 | `00_env_check.sh` | Pre-flight env check + device identity archive | Universal |
 | `01_dump_apk_versions.sh` | Collect APK versionCode / versionName | Universal |
-| `02_dump_dexopt_state.sh` | Collect dexopt filter / odex / vdex state | `[Android12]` dumpsys format may vary by version |
+| `02_dump_dexopt_state.sh` | Collect dexopt filter / odex / vdex state | Supports common Android 12/14 dumpsys formats |
 | `03_timeline_sampler.sh` | Host-side polling of system load (every 30s) | Universal |
 | `04_logcat_recorder.sh` | Rolling logcat recording | Universal |
 | `05_run_launch_test.sh` | Built-in `am start -W` launch loop | Universal |
+| `06_run_phase_with_timeline.sh` | Single-test wrapper that binds timeline lifecycle and archive checks | Universal |
 | `lib_common.sh` | Common functions + archive verification | Universal |
 
 ### Data Collection Details
@@ -231,7 +217,7 @@ HAS_VAB=true                  # Whether device uses VAB partitions
 | `oat_odex_size` / `oat_vdex_size` | `ls -l <oatDir>/<isa>/` | Judge whether precompiled artifacts exist |
 | `profile_size` | `ls -l /data/misc/profiles/ref/<pkg>/` | Judge whether runtime profile exists |
 
-- **Collection timing**: once before test and once after test per Phase
+- **Collection timing**: once before and once after each test
 - **Why it matters**: a common cause of slowness after OTA is `run-from-apk` (no odex/vdex). This script provides **smoking-gun evidence**.
 
 #### 3. APK Version Snapshot (`01_dump_apk_versions.sh`)
@@ -241,7 +227,7 @@ HAS_VAB=true                  # Whether device uses VAB partitions
 | `versionCode` / `versionName` | Rule out "same package name but different version" causing startup time differences |
 | `codePath` | Confirm whether app is installed on system partition or data partition |
 
-- **Collection timing**: once before test per Phase
+- **Collection timing**: once before each test
 - **Why it matters**: OTA usually upgrades pre-installed apps simultaneously. Without recording versionCode, you cannot distinguish "ROM difference" from "App version difference".
 
 #### 4. Device Identity Archive (`00_env_check.sh`)
@@ -264,21 +250,21 @@ HAS_VAB=true                  # Whether device uses VAB partitions
   - dex2oat trigger records (`dex2oat` / `BackgroundDexOptService` logs)
   - App launch anomalies (crash, ANR)
 
-### Continuous Timeline Across Phases (e.g. P2 → P3)
+### Continuous Timeline Across Tests (e.g. T2 → T3)
 
-After P2 test, **do not stop timeline**. Let the device charge with screen-off to enter steady state; timeline continues running until P3 test:
+After T2 test, **do not stop timeline**. Let the device charge with screen-off to enter steady state; timeline continues running until T3 test:
 
 ```bash
-# P2 phase
-bash 05_run_launch_test.sh --phase P2_A
-bash lib_common.sh archive P2_A --skip-timeline --skip-logcat
+# T2 test
+bash 05_run_launch_test.sh --phase T2_A
+bash lib_common.sh archive T2_A --skip-timeline --skip-logcat
 
 # Device charges + screen-off, wait for steady state (≥72h)
 
-# P3 phase (timeline still running)
-bash 05_run_launch_test.sh --phase P3_A
+# T3 test (timeline still running)
+bash 05_run_launch_test.sh --phase T3_A
 bash 03_timeline_sampler.sh --phase A_continuous --stop
-bash lib_common.sh split-continuous A_continuous --into P2_A P3_A
+bash lib_common.sh split-continuous A_continuous --into T2_A T3_A
 ```
 
 ---
@@ -308,27 +294,27 @@ pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,...
 
 ### 3. Analysis Framework
 
-After collecting all 5 Phase data, analyze as follows:
+After collecting all 5 test datasets, analyze as follows:
 
 **Launch time**:
-- Compute per-Phase mean of "1st launch" and "avg of 5"
+- Compute per-test mean of "1st launch" and "avg of 5"
 - Compute the three core deltas (Group 1/2/3)
 - Compute per-App CV%; steady-state CV should be < 5%
 
 **dexopt attribution** (critical):
-- Compare `filter` distribution between P2 and P4
-- If P2 has `run-from-apk` while P4 does not → OTA transient lacks pre-compiled artifacts
-- Track those Apps into P3; if they advance to `verify`/`speed-profile` → proves transient self-healing
+- Compare `filter` distribution between T2 and T4
+- If T2 has `run-from-apk` while T4 does not → OTA transient lacks pre-compiled artifacts
+- Track those Apps into T3; if they advance to `verify`/`speed-profile` → proves transient self-healing
 
 **Timeline load**:
-- Check `iowait_pct` during the first ~5 minutes of P2 test window
-- If 5~20% spikes appear while P1/P4 show 0% at the same period → VAB merge or dexopt is consuming I/O
+- Check `iowait_pct` during the first ~5 minutes of T2 test window
+- If 5~20% spikes appear while T1/T4 show 0% at the same period → VAB merge or dexopt is consuming I/O
 
 ---
 
 ## Known Limitations
 
-1. **dexopt parsing targets Android 12**: The `dumpsys package` parsing logic in `02_dump_dexopt_state.sh` is based on Android 12 (API 31). On Android 13/14/15, the dexopt output format may differ slightly. If parsing fails, adjust the `grep` / `sed` patterns according to your device's actual output.
+1. **dexopt output varies by Android version**: `02_dump_dexopt_state.sh` supports common Android 12/14 `dumpsys package` formats. If parsing fails on a new platform, add patterns for that device's actual output.
 
 2. **merge_status depends on device command**: The `merge_status` column in `03_timeline_sampler.sh` relies on `cmd update_engine merge_status`. Some devices do not support this command; when unsupported, the column will show `UNKNOWN` without affecting other fields.
 
@@ -369,7 +355,8 @@ android-ota-launch-perf-benchmark/
 │   ├── 02_dump_dexopt_state.sh
 │   ├── 03_timeline_sampler.sh
 │   ├── 04_logcat_recorder.sh
-│   └── 05_run_launch_test.sh
+│   ├── 05_run_launch_test.sh
+│   └── 06_run_phase_with_timeline.sh
 └── examples/
     ├── sample-apps.txt        # Minimal app list example
     └── sample-output/         # Output format examples (CSV)

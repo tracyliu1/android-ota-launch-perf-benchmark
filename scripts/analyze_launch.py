@@ -29,16 +29,16 @@ def load_full(path):
             data[pkg] = None
     return data
 
-phases = {'P1': 'P1_A.xlsx', 'P2_A': 'P2_A.xlsx', 'P3_A': 'P3_A.xlsx',
-          'P4_B': 'P4_B.xlsx', 'P5_B': 'P5_B.xlsx'}
-data = {k: load_full(os.path.join(LAUNCH_DIR, v)) for k, v in phases.items()}
+tests = {'T1': 'T1_A.xlsx', 'T2_A': 'T2_A.xlsx', 'T3_A': 'T3_A.xlsx',
+          'T4_B': 'T4_B.xlsx', 'T5_B': 'T5_B.xlsx'}
+data = {k: load_full(os.path.join(LAUNCH_DIR, v)) for k, v in tests.items()}
 
-# 有效 app: 所有 phase 都有 >0 数据
+# 有效 app: 所有 test 都有 >0 数据
 all_pkgs = set().union(*[set(d.keys()) for d in data.values()])
 valid = []
 for pkg in all_pkgs:
     ok = True
-    for k in phases:
+    for k in tests:
         v = data[k].get(pkg)
         if v is None or v['all5_avg'] == 0 or v['t1'] == 0:
             ok = False
@@ -47,37 +47,37 @@ for pkg in all_pkgs:
         valid.append(pkg)
 valid.sort()
 
-print(f"=== 有效 app: {len(valid)} (排除任一 phase 为 0/None 的项) ===\n")
+print(f"=== 有效 app: {len(valid)} (排除任一 test 为 0/None 的项) ===\n")
 
 # 三口径平均
 print("【口径对比】")
-print(f"{'指标':<14}", "".join(f"{k:>9}" for k in phases))
+print(f"{'指标':<14}", "".join(f"{k:>9}" for k in tests))
 print('-' * 65)
 for key, label in [('t1', '第1次启动'), ('all5_avg', '5次平均'), ('t2_5_avg', '2~5次温启动')]:
-    means = {k: statistics.mean([data[k][p][key] for p in valid]) for k in phases}
-    print(f"{label:<14}", "".join(f"{means[k]:>9.0f}" for k in phases))
+    means = {k: statistics.mean([data[k][p][key] for p in valid]) for k in tests}
+    print(f"{label:<14}", "".join(f"{means[k]:>9.0f}" for k in tests))
 
-print("\n【Δ 对 P1 基线】")
-print(f"{'指标':<14} {'ΔP2-P1':>10} {'ΔP3-P1':>10} {'ΔP4-P1':>10} {'ΔP5-P1':>10}")
+print("\n【Δ 对 T1 基线】")
+print(f"{'指标':<14} {'ΔT2-T1':>10} {'ΔT3-T1':>10} {'ΔT4-T1':>10} {'ΔT5-T1':>10}")
 print('-' * 60)
 for key, label in [('t1', '第1次启动'), ('all5_avg', '5次平均'), ('t2_5_avg', '2~5次温启动')]:
-    means = {k: statistics.mean([data[k][p][key] for p in valid]) for k in phases}
-    base = means['P1']
-    print(f"{label:<14}", "  ".join(f"{means[k]-base:>+7.0f} ms" for k in ['P2_A', 'P3_A', 'P4_B', 'P5_B']))
+    means = {k: statistics.mean([data[k][p][key] for p in valid]) for k in tests}
+    base = means['T1']
+    print(f"{label:<14}", "  ".join(f"{means[k]-base:>+7.0f} ms" for k in ['T2_A', 'T3_A', 'T4_B', 'T5_B']))
 
 print("\n【关键 Δ：OTA vs 线刷路径】")
 for key, label in [('t1', '第1次启动'), ('all5_avg', '5次平均')]:
-    means = {k: statistics.mean([data[k][p][key] for p in valid]) for k in phases}
+    means = {k: statistics.mean([data[k][p][key] for p in valid]) for k in tests}
     print(f"  {label}:")
-    print(f"    P3_A vs P5_B (同稳态, OTA vs 线刷): {means['P3_A']-means['P5_B']:+.0f} ms")
-    print(f"    P3_A vs P2_A (OTA 瞬态成本):       {means['P3_A']-means['P2_A']:+.0f} ms")
-    print(f"    P5_B vs P4_B (线刷瞬态成本):       {means['P5_B']-means['P4_B']:+.0f} ms")
+    print(f"    T3_A vs T5_B (同稳态, OTA vs 线刷): {means['T3_A']-means['T5_B']:+.0f} ms")
+    print(f"    T3_A vs T2_A (OTA 瞬态成本):       {means['T3_A']-means['T2_A']:+.0f} ms")
+    print(f"    T5_B vs T4_B (线刷瞬态成本):       {means['T5_B']-means['T4_B']:+.0f} ms")
 
 # 方差
 print("\n【方差（每 app 5次启动 CV%）】")
-print(f"  {'Phase':<8} {'平均 CV%':>10}")
+print(f"  {'Test':<8} {'平均 CV%':>10}")
 print('  ' + '-' * 22)
-for k in phases:
+for k in tests:
     cvs = []
     for p in valid:
         vals = data[k][p]['all']

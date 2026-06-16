@@ -31,18 +31,18 @@ def load_timeline(path, fmt):
     return rows
 
 # 5 个测试期
-phases_test = {
-    'P1':   ('P1_A_timeline.csv', 'parsed'),
-    'P2_A': ('P2_A_timeline.csv', 'parsed'),
-    'P3_A': ('P3_A_timeline.csv', 'new'),
-    'P4_B': ('P4_B_timeline.csv', 'parsed'),
-    'P5_B': ('P5_B_timeline.csv', 'new'),
+tests = {
+    'T1':   ('T1_A_timeline.csv', 'parsed'),
+    'T2_A': ('T2_A_timeline.csv', 'parsed'),
+    'T3_A': ('T3_A_timeline.csv', 'new'),
+    'T4_B': ('T4_B_timeline.csv', 'parsed'),
+    'T5_B': ('T5_B_timeline.csv', 'new'),
 }
 
-print("=== 5 个 phase 测试期的系统负载对比 ===\n")
-print(f"{'Phase':<8} {'ticks':>6} {'la1m_avg':>10} {'la1m_max':>10} {'mem_min(MB)':>12} {'dex2oat_ticks':>15}")
+print("=== 5 个测试期的系统负载对比 ===\n")
+print(f"{'Test':<8} {'ticks':>6} {'la1m_avg':>10} {'la1m_max':>10} {'mem_min(MB)':>12} {'dex2oat_ticks':>15}")
 print('-' * 70)
-for k, (fname, fmt) in phases_test.items():
+for k, (fname, fmt) in tests.items():
     rows = load_timeline(os.path.join(TL_DIR, fname), fmt)
     la = [r['loadavg_1m'] for r in rows]
     mem = [r['mem_avail_kb']/1024 for r in rows]
@@ -50,7 +50,7 @@ for k, (fname, fmt) in phases_test.items():
     print(f"{k:<8} {len(rows):>6} {statistics.mean(la):>10.2f} {max(la):>10.2f} {min(mem):>12.0f} {dex:>10}/{len(rows)}")
 
 # Transition 期
-print("\n=== Transition 期负载（A: P2 → P3 间隔, B: P4 后稳态间隔）===\n")
+print("\n=== Transition 期负载（A: T2 → T3 间隔, B: T4 后稳态间隔）===\n")
 for label, fname in [('A_transition', 'A_transition_timeline.csv'),
                       ('B_transition', 'B_transition_timeline.csv')]:
     rows = load_timeline(os.path.join(TL_DIR, fname), 'new')
