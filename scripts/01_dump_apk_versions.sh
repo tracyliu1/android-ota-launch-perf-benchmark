@@ -4,7 +4,7 @@
 # 用法:
 #   bash scripts/01_dump_apk_versions.sh --phase <PHASE> --suffix <before|after>
 #
-# 产出: evidence/<PHASE>/apk_versions_<suffix>.csv
+# 产出: evidence/<run-tag>/<device>_<PHASE>/apk_versions_<suffix>.csv
 # 字段: pkg,installed,versionCode,versionName,firstInstallTime,lastUpdateTime,codePath,primaryCpuAbi
 # 平台说明: dumpsys package 格式在 Android 各版本基本一致，若解析失败请反馈。
 

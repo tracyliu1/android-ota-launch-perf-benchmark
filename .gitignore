@@ -12,3 +12,6 @@ reports/
 notes/
 .timeline_*.csv
 .timeline_sampler_*.pid
+
+# Local ad-hoc analysis workbooks
+/*.xlsx

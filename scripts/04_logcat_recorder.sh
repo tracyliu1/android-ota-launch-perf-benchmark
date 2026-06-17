@@ -6,7 +6,7 @@
 #   bash scripts/04_logcat_recorder.sh --phase <PHASE> --stop
 #
 # 行为:
-#   --start: 在 host 端启动 adb logcat，按 64MB 轮转写入 evidence/<PHASE>/logcat/
+#   --start: 在 host 端启动 adb logcat，按 64MB 轮转写入 evidence/<run-tag>/<device>_<PHASE>/logcat/
 #   --stop:  停止录制
 #
 # 平台说明: adb logcat 所有 Android 设备通用。
@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/lib_common.sh"
 
 parse_phase_args "$@"
 PHASE="${PARSED_PHASE:-}"
+[ -z "$PHASE" ] || validate_phase "$PHASE"
 
 ACTION=""
 for arg in "${REMAINING_ARGS[@]}"; do

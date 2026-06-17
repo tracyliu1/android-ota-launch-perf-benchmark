@@ -76,6 +76,18 @@ Use `T`-prefixed test IDs such as `T1_Demo` or `T2_OTA_Immediate`. The `--phase`
 bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 ```
 
+Artifacts are grouped by date and device tag, for example:
+
+```text
+evidence/0617/<device-tag>_T1_Demo/
+```
+
+The `device-tag` is detected from adb device properties by default. You can override it per run:
+
+```bash
+EVIDENCE_DEVICE_TAG=MyDevice bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
+```
+
 ### 5. Analyze
 
 ```bash
@@ -171,12 +183,16 @@ All scripts share `scripts/config.sh` (copied from `config.template.sh`). Key it
 
 ```bash
 DEVICE_SERIAL=""              # Empty = auto-detect single device
+EVIDENCE_DEVICE_TAG=""        # Empty = auto-detect output device tag from adb properties
+EVIDENCE_RUN_TAG=""           # Optional; empty = current MMDD, e.g. 0617
 APP_LIST_FILE="apps.txt"      # Path to app list
 LAUNCH_COUNT=5                # Launches per app
 LAUNCH_INTERVAL=10            # Interval in seconds
 DEVICE_TMPDIR="/data/local/tmp/ota_perf_benchmark"
 HAS_VAB=true                  # Whether device uses VAB partitions
 ```
+
+The default artifact directory is `evidence/<MMDD>/<device-tag>_<PHASE>/`. For repeated runs of the same phase on the same day, set `EVIDENCE_RUN_TAG=0617_run2` to avoid overwriting previous output.
 
 ### Script Reference
 

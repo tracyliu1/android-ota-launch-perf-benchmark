@@ -57,6 +57,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$PHASE" ] || { log_err "Missing --phase argument"; exit 2; }
+validate_phase "$PHASE"
 
 TIMELINE_STARTED=false
 cleanup() {

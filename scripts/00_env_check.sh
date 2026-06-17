@@ -9,7 +9,7 @@
 #   2. host端：investigation 目录可写、剩余空间 >= 5 GB
 #   3. 设备：仅一台连接、/data/local/tmp 剩余 >= 2 GB
 #   4. App 清单文件存在、条目数正常
-#   5. 把设备 fingerprint / build / VAB props 等 dump 到 evidence/env/<phase>.txt
+#   5. 把设备 fingerprint / build / VAB props 等 dump 到 evidence/<run-tag>/env/<device>_<phase>.txt
 #
 # 退出码: 0 全过；非 0 表示有 fail 项
 # 平台说明: [MTK/Android12] 部分 prop 为 MTK 特有，请根据你的设备调整。
@@ -96,8 +96,8 @@ if [ -n "$SERIAL" ]; then
     dump_device_id "$PHASE"
     d="$(phase_dir "$PHASE")"
     ensure_dir "$d"
-    cp "$EVIDENCE_DIR/env/${PHASE}.txt" "$d/device_id.txt"
-    log_ok "Copied env/${PHASE}.txt → ${PHASE}/device_id.txt"
+    cp "$(evidence_run_dir)/env/$(phase_tag "$PHASE").txt" "$d/device_id.txt"
+    log_ok "Copied env/$(phase_tag "$PHASE").txt → $(phase_tag "$PHASE")/device_id.txt"
 fi
 
 echo ""

@@ -16,6 +16,13 @@
 # 多设备时，请填写目标 serial，或 export ANDROID_SERIAL=xxx
 DEVICE_SERIAL=""
 
+# ---------- 证据目录设备名 ----------
+# 可选：留空时脚本会从 adb 设备属性自动生成；需要固定命名时再手动填写。
+# 输出目录会使用 evidence/<MMDD>/<device-tag>_<PHASE>/。
+# 例如设置 EVIDENCE_DEVICE_TAG="MyDevice" 且 --phase T0 时：
+#   evidence/0617/MyDevice_T0/
+EVIDENCE_DEVICE_TAG="${EVIDENCE_DEVICE_TAG:-}"
+
 # ---------- App 清单 ----------
 # 每行格式: package/activity
 # activity 可写相对路径（如 .MainActivity）或绝对路径
@@ -76,3 +83,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INVESTIGATION_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 EVIDENCE_DIR="$INVESTIGATION_ROOT/evidence"
 REPORTS_DIR="$INVESTIGATION_ROOT/reports"
+
+# ---------- 证据归档批次 ----------
+# 默认由 scripts/lib_common.sh 使用当天日期 MMDD，例如 evidence/0617/<device-tag>_T0/。
+# 同一天重复跑同一批测试时，可设置 EVIDENCE_RUN_TAG 避免覆盖：
+#   EVIDENCE_RUN_TAG=0617_run2 bash scripts/06_run_phase_with_timeline.sh --phase T0 -- -c 5 -s 10
+# EVIDENCE_RUN_TAG="0617"

@@ -4,7 +4,7 @@
 # 用法:
 #   bash scripts/02_dump_dexopt_state.sh --phase <PHASE> --suffix <before|after>
 #
-# 产出: evidence/<PHASE>/dexopt_<suffix>.csv
+# 产出: evidence/<run-tag>/<device>_<PHASE>/dexopt_<suffix>.csv
 # 字段: pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,oat_odex_mtime,oat_vdex_size,oat_vdex_mtime,profile_size,profile_mtime
 # 平台说明:
 #   dumpsys package <pkg> 的 dexopt 输出格式因 Android 版本而异。

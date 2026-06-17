@@ -7,7 +7,7 @@
 #
 # 行为:
 #   --start: 在 host 端启动后台进程，每 30 秒通过 adb shell 采样一次系统状态
-#   --stop:  停止采样，把数据保存到 evidence/<PHASE>/timeline/
+#   --stop:  停止采样，把数据保存到 evidence/<run-tag>/<device>_<PHASE>/timeline/
 #
 # 采样字段（CSV）:
 #   epoch,iso_datetime,loadavg_1m,loadavg_5m,loadavg_15m,
@@ -24,6 +24,7 @@ source "$SCRIPT_DIR/lib_common.sh"
 
 parse_phase_args "$@"
 PHASE="${PARSED_PHASE:-}"
+[ -z "$PHASE" ] || validate_phase "$PHASE"
 
 ACTION=""
 for arg in "${REMAINING_ARGS[@]}"; do
@@ -118,7 +119,7 @@ if [ "$ACTION" = "start" ]; then
     sampler_pid=$!
     echo "$sampler_pid" > "$PID_FILE"
     log_ok "Timeline sampler started, host-pid=$sampler_pid"
-    log_info "Output will be saved to evidence/$PHASE/timeline/ upon --stop"
+    log_info "Output will be saved to $(phase_dir "$PHASE")/timeline/ upon --stop"
 
 elif [ "$ACTION" = "stop" ]; then
     [ -n "$PHASE" ] || { log_err "--stop requires --phase"; exit 2; }

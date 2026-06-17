@@ -74,6 +74,18 @@ cp apps.template.txt apps.txt
 bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 ```
 
+输出会按日期和设备标签归档，例如：
+
+```text
+evidence/0617/<device-tag>_T1_Demo/
+```
+
+`device-tag` 默认从 adb 设备属性自动生成；也可以临时指定：
+
+```bash
+EVIDENCE_DEVICE_TAG=MyDevice bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
+```
+
 ### 5. 分析
 
 ```bash
@@ -169,12 +181,16 @@ adb shell dumpsys battery | grep -E "AC powered|USB powered|level"
 
 ```bash
 DEVICE_SERIAL=""              # 留空=自动检测唯一设备
+EVIDENCE_DEVICE_TAG=""        # 留空=从 adb 设备属性自动生成输出目录设备标签
+EVIDENCE_RUN_TAG=""           # 可选；留空=当天 MMDD，例如 0617
 APP_LIST_FILE="apps.txt"      # App 清单路径
 LAUNCH_COUNT=5                # 每个 App 启动次数
 LAUNCH_INTERVAL=10            # 启动间隔（秒）
 DEVICE_TMPDIR="/data/local/tmp/ota_perf_benchmark"
 HAS_VAB=true                  # 设备是否使用 VAB 分区
 ```
+
+默认输出目录为 `evidence/<MMDD>/<device-tag>_<PHASE>/`。同一天重复跑同一 phase 时，可用 `EVIDENCE_RUN_TAG=0617_run2` 避免覆盖。
 
 ### 脚本一览
 

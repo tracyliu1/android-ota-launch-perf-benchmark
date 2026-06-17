@@ -8,28 +8,28 @@
 - [ ] App list prepared (`scripts/apps.txt`) — strict intersection of packages present on both ROMs
 - [ ] `scripts/config.sh` created from `config.template.sh`
 
-## Phase P1: vOld Flash Baseline (Device A)
+## Phase T1: vOld Flash Baseline (Device A)
 
 1. Flash vOld ROM to device A
 2. Wait for boot completion (`getprop sys.boot_completed == 1`)
-3. Run `bash 00_env_check.sh --phase P1_Demo`
+3. Run `bash 00_env_check.sh --phase T1_Demo`
 4. Start timeline and logcat
 5. Snapshot APK versions and dexopt (before)
-6. Run launch test: `bash 05_run_launch_test.sh --phase P1_Demo`
+6. Run launch test: `bash 05_run_launch_test.sh --phase T1_Demo`
 7. Snapshot dexopt (after)
 8. Stop timeline/logcat and archive
 
-## Phase P2: OTA Immediate (Device A)
+## Phase T2: OTA Immediate (Device A)
 
 1. Trigger OTA upgrade to vNew on device A
 2. Wait for OTA installation and automatic reboot
 3. Wait ~3 minutes after `sys.boot_completed == 1`
-4. Do **NOT** stop timeline if it is meant to span P2→P3
-5. Run launch test: `bash 05_run_launch_test.sh --phase P2_Demo`
+4. Do **NOT** stop timeline if it is meant to span T2→T3
+5. Run launch test: `bash 05_run_launch_test.sh --phase T2_Demo`
 6. Snapshot dexopt (after)
 7. Archive (skip timeline/logcat if they continue)
 
-## Phase P3: OTA Steady State (Device A)
+## Phase T3: OTA Steady State (Device A)
 
 1. Plug in charger, turn screen off, place in cool area
 2. **Do NOT touch the device** for ≥72 hours
@@ -39,22 +39,22 @@
    adb shell cat /proc/loadavg
    ```
 4. After 72h, wake device and verify steady-state checklist
-5. Run launch test: `bash 05_run_launch_test.sh --phase P3_Demo`
+5. Run launch test: `bash 05_run_launch_test.sh --phase T3_Demo`
 6. Stop continuous timeline/logcat
-7. Run `split-continuous` to slice timeline into P2 and P3 windows
+7. Run `split-continuous` to slice timeline into T2 and T3 windows
 8. Archive
 
-## Phase P4: vNew Flash Immediate (Device B)
+## Phase T4: vNew Flash Immediate (Device B)
 
 1. Flash vNew ROM to device B
 2. Wait for boot completion
 3. Start timeline and logcat
-4. Run launch test: `bash 05_run_launch_test.sh --phase P4_Demo`
+4. Run launch test: `bash 05_run_launch_test.sh --phase T4_Demo`
 5. Archive
 
-## Phase P5: vNew Flash Steady State (Device B)
+## Phase T5: vNew Flash Steady State (Device B)
 
-Same as P3, but for device B.
+Same as T3, but for device B.
 
 ## Platform Compatibility Notes
 

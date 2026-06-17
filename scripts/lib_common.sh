@@ -27,6 +27,14 @@ EVIDENCE_DIR="$INVESTIGATION_ROOT/evidence"
 REPORTS_DIR="$INVESTIGATION_ROOT/reports"
 NOTES_DIR="$INVESTIGATION_ROOT/notes"
 
+# 默认按日期把证据归档到 evidence/MMDD/，同一天多轮可手动覆盖：
+#   EVIDENCE_RUN_TAG=0617_run2 bash scripts/06_run_phase_with_timeline.sh ...
+EVIDENCE_RUN_TAG="${EVIDENCE_RUN_TAG:-$(date '+%m%d')}"
+export EVIDENCE_RUN_TAG
+
+EVIDENCE_DEVICE_TAG="${EVIDENCE_DEVICE_TAG:-}"
+export EVIDENCE_DEVICE_TAG
+
 # ---------- 日志 ----------
 log_info() { echo "[INFO $(date '+%H:%M:%S')] $*" >&2; }
 log_warn() { echo "[WARN $(date '+%H:%M:%S')] $*" >&2; }
@@ -58,19 +66,92 @@ require_phase() {
         log_err "Missing --phase argument"
         exit 2
     fi
+    validate_phase "$PARSED_PHASE"
+}
+
+evidence_run_dir() {
+    echo "$EVIDENCE_DIR/$EVIDENCE_RUN_TAG"
+}
+
+sanitize_tag() {
+    local tag="$1"
+    tag="$(printf '%s' "$tag" | tr -cs 'A-Za-z0-9._-' '_' | sed 's/^_*//;s/_*$//')"
+    [ -n "$tag" ] || tag="Device"
+    printf '%s\n' "$tag"
+}
+
+detect_device_tag() {
+    local serial=""
+    local prop=""
+    serial=$(get_device_serial 2>/dev/null || true)
+    if [ -n "$serial" ]; then
+        for key in ro.product.model ro.product.vendor.device ro.product.system.device ro.product.device ro.product.name; do
+            prop=$(adb -s "$serial" shell getprop "$key" 2>/dev/null | tr -d '\r' | sed -n '1p')
+            if [ -n "$prop" ]; then
+                sanitize_tag "$prop"
+                return 0
+            fi
+        done
+        sanitize_tag "$serial"
+        return 0
+    fi
+    sanitize_tag "Device"
+}
+
+device_tag() {
+    if [ -n "${EVIDENCE_DEVICE_TAG:-}" ]; then
+        sanitize_tag "$EVIDENCE_DEVICE_TAG"
+    else
+        detect_device_tag
+    fi
+}
+
+phase_test_tag() {
+    local phase="$1"
+    if [[ "$phase" =~ _T[0-9] ]]; then
+        printf 'T%s\n' "${phase#*_T}"
+    else
+        printf '%s\n' "$phase"
+    fi
+}
+
+validate_phase() {
+    local phase="$1"
+    local test_tag
+    test_tag="$(phase_test_tag "$phase")"
+    if [[ "$test_tag" =~ ^P[0-9] ]]; then
+        log_err "Old P* phase name is not allowed anymore: $phase"
+        log_info "Use T* instead, for example: --phase T0"
+        exit 2
+    fi
+    if ! [[ "$test_tag" =~ ^T[0-9][A-Za-z0-9._-]*$ ]]; then
+        log_err "Invalid phase name: $phase"
+        log_info "Use T* phase names, for example: T0, T1_OTA, T2_Steady"
+        exit 2
+    fi
+}
+
+phase_tag() {
+    local phase="$1"
+    local dev
+    local test_tag
+    dev="$(device_tag)"
+    test_tag="$(phase_test_tag "$phase")"
+    echo "${dev}_${test_tag}"
 }
 
 phase_dir() {
-    echo "$EVIDENCE_DIR/$1"
+    echo "$(evidence_run_dir)/$(phase_tag "$1")"
 }
 
 # ---------- 设备相关 ----------
 get_device_serial() {
-    if [ -n "${ANDROID_SERIAL:-}" ]; then
+    local target_serial="${ANDROID_SERIAL:-${DEVICE_SERIAL:-}}"
+    if [ -n "$target_serial" ]; then
         local hit
-        hit=$(adb devices | awk -v s="$ANDROID_SERIAL" 'NR>1 && $1==s && $2=="device" {print $1}')
+        hit=$(adb devices | awk -v s="$target_serial" 'NR>1 && $1==s && $2=="device" {print $1}')
         if [ -z "$hit" ]; then
-            log_err "ANDROID_SERIAL=$ANDROID_SERIAL set, but not connected/authorized:"
+            log_err "Configured device serial=$target_serial, but not connected/authorized:"
             adb devices >&2
             return 1
         fi
@@ -108,14 +189,17 @@ check_device_disk_space() {
     return 0
 }
 
-# 把设备身份信息 dump 到 evidence/env/<phase>.txt
+# 把设备身份信息 dump 到 evidence/<run-tag>/env/<device>_<phase>.txt
 # [MTK/Android12] 以下 prop 列表基于 MTK Android12，请根据你的设备增减
 dump_device_id() {
     local phase="$1"
-    local out="$EVIDENCE_DIR/env/${phase}.txt"
+    local phase_label
+    phase_label="$(phase_tag "$phase")"
+    local out="$(evidence_run_dir)/env/${phase_label}.txt"
     ensure_dir "$(dirname "$out")"
     {
         echo "# Device identity for phase: $phase"
+        echo "# Evidence phase tag: $phase_label"
         echo "# Captured at: $(ts_iso)"
         echo ""
         echo "## adb devices"
@@ -160,6 +244,7 @@ write_launch_window() {
     ensure_dir "$(dirname "$out")"
     {
         echo "phase=$phase"
+        echo "phase_tag=$(phase_tag "$phase")"
         echo "started_at=$started"
         echo "ended_at=$ended"
         echo "started_iso=$(date -r "$started" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || true)"
@@ -185,6 +270,7 @@ cmd_archive() {
         esac
     done
     [ -n "$phase" ] || { log_err "archive requires <phase>"; exit 2; }
+    validate_phase "$phase"
 
     local d
     d="$(phase_dir "$phase")"
@@ -211,9 +297,9 @@ cmd_archive() {
     $skip_timeline || check_file "timeline" "timeline samples (20_timeline_sampler)"
     $skip_logcat   || check_file "logcat"   "rolling logcat (21_logcat_recorder)"
 
-    if [ ! -e "$d/device_id.txt" ] && [ -e "$EVIDENCE_DIR/env/${phase}.txt" ]; then
-        cp "$EVIDENCE_DIR/env/${phase}.txt" "$d/device_id.txt"
-        log_info "Copied env/${phase}.txt → ${phase}/device_id.txt"
+    if [ ! -e "$d/device_id.txt" ] && [ -e "$(evidence_run_dir)/env/$(phase_tag "$phase").txt" ]; then
+        cp "$(evidence_run_dir)/env/$(phase_tag "$phase").txt" "$d/device_id.txt"
+        log_info "Copied env/$(phase_tag "$phase").txt → $(phase_tag "$phase")/device_id.txt"
         missing=$((missing - 1))
     fi
 
@@ -250,11 +336,14 @@ cmd_split_continuous() {
     done
     [ -n "$cont" ] || { log_err "split-continuous requires <cont-tag>"; exit 2; }
     [ ${#into[@]} -gt 0 ] || { log_err "split-continuous requires --into <p1> <p2> ..."; exit 2; }
+    for p in "${into[@]}"; do
+        validate_phase "$p"
+    done
 
-    local src="$EVIDENCE_DIR/timeline_${cont}"
+    local src="$(evidence_run_dir)/timeline_${cont}"
     if [ ! -d "$src" ]; then
         log_err "Continuous timeline dir not found: $src"
-        log_info "Hint: 03_timeline_sampler.sh --stop 时会把采样数据保存到 evidence/timeline_<phase>/"
+        log_info "Hint: 03_timeline_sampler.sh --stop 时会把采样数据保存到 $(evidence_run_dir)/timeline_<phase>/"
         exit 1
     fi
     if [ ! -f "$src/timeline.csv" ]; then
