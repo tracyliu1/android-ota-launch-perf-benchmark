@@ -6,13 +6,16 @@
 #   bash scripts/03_timeline_sampler.sh --phase <PHASE> --stop
 #
 # 行为:
-#   --start: 在 host 端启动后台进程，每 30 秒通过 adb shell 采样一次系统状态
+#   --start: 在 host 端启动后台进程，按 TIMELINE_INTERVAL_SEC 通过 adb shell 采样系统状态
 #   --stop:  停止采样，把数据保存到 evidence/<run-tag>/<device>_<PHASE>/timeline/
 #
 # 采样字段（CSV）:
 #   epoch,iso_datetime,loadavg_1m,loadavg_5m,loadavg_15m,
 #   mem_total_kb,mem_avail_kb,dex2oat_count,dex2oat_cpu_pct,
-#   dexopt_job_status,merge_status,iowait_pct,user_pct,system_pct
+#   dexopt_job_status,merge_status,iowait_pct,user_pct,system_pct,
+#   ac_powered,usb_powered,wireless_powered,max_charging_current,battery_level,battery_temp,
+#   policy*_cur_freq,policy*_min_freq,policy*_max_freq,policy*_governor,
+#   thermal_max_temp,thermal_max_type
 #
 # 平台说明:
 #   [MTK/Android12] merge_status 通过 getprop / cmd update_engine 获取，
@@ -41,6 +44,124 @@ fi
 
 PID_FILE="$INVESTIGATION_ROOT/.timeline_sampler_${PHASE}.pid"
 LOG_FILE="$INVESTIGATION_ROOT/.timeline_sampler_${PHASE}.log"
+
+TIMELINE_INTERVAL_SEC="${TIMELINE_INTERVAL_SEC:-30}"
+
+csv_escape() {
+    local s="${1:-}"
+    s="${s//$'\r'/}"
+    s="${s//$'\n'/;}"
+    s="${s//\"/\"\"}"
+    printf '"%s"' "$s"
+}
+
+is_enabled() {
+    case "${1:-}" in
+        true|TRUE|1|yes|YES|y|Y) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+timeline_header() {
+    local header="epoch,iso_datetime,loadavg_1m,loadavg_5m,loadavg_15m,mem_total_kb,mem_avail_kb,dex2oat_count,dex2oat_cpu_pct,dexopt_job_status,merge_status,iowait_pct,user_pct,system_pct"
+
+    if is_enabled "${TIMELINE_CAPTURE_BATTERY:-true}"; then
+        header+=",ac_powered,usb_powered,wireless_powered,max_charging_current,battery_level,battery_temp"
+    fi
+
+    if is_enabled "${TIMELINE_CAPTURE_CPUFREQ:-true}"; then
+        local policy
+        for policy in "${TIMELINE_CPU_POLICIES[@]}"; do
+            header+=",policy${policy}_cur_freq,policy${policy}_min_freq,policy${policy}_max_freq,policy${policy}_governor"
+        done
+    fi
+
+    if is_enabled "${TIMELINE_CAPTURE_THERMAL:-true}"; then
+        header+=",thermal_max_temp,thermal_max_type"
+    fi
+
+    printf '%s\n' "$header"
+}
+
+read_proc_stat_cpu() {
+    adb shell "cat /proc/stat" 2>/dev/null | awk '/^cpu / {print $2,$3,$4,$5,$6,$7,$8,$9,$10,$11; exit}' | tr -d '\r'
+}
+
+calc_cpu_pct() {
+    local a="$1" b="$2" index="$3"
+    awk -v a="$a" -v b="$b" -v idx="$index" '
+        BEGIN {
+            split(a, aa, " ");
+            split(b, bb, " ");
+            total = 0;
+            for (i = 1; i <= 10; i++) {
+                d[i] = bb[i] - aa[i];
+                total += d[i];
+            }
+            if (total <= 0) {
+                printf "";
+            } else {
+                printf "%.1f", d[idx] * 100 / total;
+            }
+        }'
+}
+
+sample_battery_fields() {
+    if ! is_enabled "${TIMELINE_CAPTURE_BATTERY:-true}"; then
+        return 0
+    fi
+
+    local battery ac usb wireless current level temp
+    battery=$(adb shell "dumpsys battery" 2>/dev/null | tr -d '\r' || true)
+    ac=$(echo "$battery" | awk -F': ' '/AC powered:/ {print $2; exit}')
+    usb=$(echo "$battery" | awk -F': ' '/USB powered:/ {print $2; exit}')
+    wireless=$(echo "$battery" | awk -F': ' '/Wireless powered:/ {print $2; exit}')
+    current=$(echo "$battery" | awk -F': ' '/Max charging current:/ {print $2; exit}')
+    level=$(echo "$battery" | awk -F': ' '/level:/ {print $2; exit}')
+    temp=$(echo "$battery" | awk -F': ' '/temperature:/ {print $2; exit}')
+    printf ',%s,%s,%s,%s,%s,%s' "${ac:-}" "${usb:-}" "${wireless:-}" "${current:-}" "${level:-}" "${temp:-}"
+}
+
+sample_cpufreq_fields() {
+    if ! is_enabled "${TIMELINE_CAPTURE_CPUFREQ:-true}"; then
+        return 0
+    fi
+
+    local policy base cur min max gov
+    for policy in "${TIMELINE_CPU_POLICIES[@]}"; do
+        base="/sys/devices/system/cpu/cpufreq/policy${policy}"
+        cur=$(adb shell "cat $base/scaling_cur_freq 2>/dev/null" | tr -d '\r' || true)
+        min=$(adb shell "cat $base/scaling_min_freq 2>/dev/null" | tr -d '\r' || true)
+        max=$(adb shell "cat $base/scaling_max_freq 2>/dev/null" | tr -d '\r' || true)
+        gov=$(adb shell "cat $base/scaling_governor 2>/dev/null" | tr -d '\r' || true)
+        printf ',%s,%s,%s,%s' "${cur:-}" "${min:-}" "${max:-}" "${gov:-}"
+    done
+}
+
+sample_thermal_fields() {
+    if ! is_enabled "${TIMELINE_CAPTURE_THERMAL:-true}"; then
+        return 0
+    fi
+
+    local out max_temp max_type
+    out=$(adb shell '
+        for z in /sys/class/thermal/thermal_zone*; do
+            [ -r "$z/temp" ] || continue
+            temp=$(cat "$z/temp" 2>/dev/null)
+            case "$temp" in
+                ""|*[!0-9-]*) continue ;;
+            esac
+            type=$(cat "$z/type" 2>/dev/null)
+            echo "$temp $type"
+        done
+    ' 2>/dev/null | tr -d '\r' || true)
+    if [ -n "$out" ]; then
+        max_temp=$(echo "$out" | awk 'BEGIN{m=""} {if (m=="" || $1>m) {m=$1; $1=""; sub(/^ /,""); t=$0}} END{print m}')
+        max_type=$(echo "$out" | awk 'BEGIN{m=""} {if (m=="" || $1>m) {m=$1; $1=""; sub(/^ /,""); t=$0}} END{print t}')
+    fi
+    printf ',%s,' "${max_temp:-}"
+    csv_escape "${max_type:-}"
+}
 
 timeline_tick() {
     local epoch=$(ts_epoch)
@@ -73,22 +194,28 @@ timeline_tick() {
         merge_status=$(adb shell "cmd update_engine merge_status 2>/dev/null || getprop ro.boot.slot_suffix 2>/dev/null" | tr -d '\r')
     fi
 
-    # CPU 拆分（从 /proc/stat 第一行计算）
-    local cpu_line=$(adb shell "cat /proc/stat" 2>/dev/null | grep '^cpu ' | tr -d '\r')
-    local cpu_user="" cpu_sys="" cpu_iow=""
-    if [ -n "$cpu_line" ]; then
-        # 简化为直接读 top -n1 的汇总行
-        local top_cpu=$(adb shell "top -n1 2>/dev/null | grep -m1 '%cpu' || top -n1 2>/dev/null | grep -m1 'CPU:'" | tr -d '\r')
-        cpu_user=$(echo "$top_cpu" | sed -n 's/.*user[^0-9]*\([0-9.]*\).*/\1/p')
-        cpu_sys=$(echo "$top_cpu" | sed -n 's/.*sys[^0-9]*\([0-9.]*\).*/\1/p')
-        cpu_iow=$(echo "$top_cpu" | sed -n 's/.*iow[^0-9]*\([0-9.]*\).*/\1/p')
+    # CPU 拆分：/proc/stat 两次采样计算 delta，避免依赖 top 输出格式。
+    local cpu_a cpu_b cpu_user="" cpu_sys="" cpu_iow=""
+    cpu_a=$(read_proc_stat_cpu || true)
+    sleep 1
+    cpu_b=$(read_proc_stat_cpu || true)
+    if [ -n "$cpu_a" ] && [ -n "$cpu_b" ]; then
+        cpu_user=$(calc_cpu_pct "$cpu_a" "$cpu_b" 1)
+        cpu_sys=$(calc_cpu_pct "$cpu_a" "$cpu_b" 3)
+        cpu_iow=$(calc_cpu_pct "$cpu_a" "$cpu_b" 5)
     fi
 
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,"%s","%s",%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,' \
         "$epoch" "$iso" "$load1" "$load5" "$load15" \
-        "${mem_total:-}" "${mem_avail:-}" "$dex2oat_count" "${dex2oat_cpu:-0}" \
-        "${dexopt_job:-}" "${merge_status:-UNKNOWN}" \
-        "${cpu_iow:-}" "${cpu_user:-}" "${cpu_sys:-}"
+        "${mem_total:-}" "${mem_avail:-}" "$dex2oat_count" "${dex2oat_cpu:-0}"
+    csv_escape "${dexopt_job:-}"
+    printf ','
+    csv_escape "${merge_status:-UNKNOWN}"
+    printf ',%s,%s,%s' "${cpu_iow:-}" "${cpu_user:-}" "${cpu_sys:-}"
+    sample_battery_fields
+    sample_cpufreq_fields
+    sample_thermal_fields
+    printf '\n'
 }
 
 if [ "$ACTION" = "start" ]; then
@@ -102,17 +229,17 @@ if [ "$ACTION" = "start" ]; then
     fi
 
     SERIAL=$(get_device_serial) || exit 1
-    log_info "Starting timeline sampler for phase=$PHASE (interval=30s)"
+    log_info "Starting timeline sampler for phase=$PHASE (interval=${TIMELINE_INTERVAL_SEC}s)"
 
     # 启动后台采样进程
     (
         # 写 CSV header
         out_tmp="$INVESTIGATION_ROOT/.timeline_${PHASE}.csv"
-        echo "epoch,iso_datetime,loadavg_1m,loadavg_5m,loadavg_15m,mem_total_kb,mem_avail_kb,dex2oat_count,dex2oat_cpu_pct,dexopt_job_status,merge_status,iowait_pct,user_pct,system_pct" > "$out_tmp"
+        timeline_header > "$out_tmp"
 
         while true; do
             timeline_tick >> "$out_tmp" 2>/dev/null || true
-            sleep 30
+            sleep "$TIMELINE_INTERVAL_SEC"
         done
     ) >"$LOG_FILE" 2>&1 &
 

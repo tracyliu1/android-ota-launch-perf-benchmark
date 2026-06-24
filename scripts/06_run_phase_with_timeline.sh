@@ -80,6 +80,9 @@ fi
 
 if [ "$SKIP_APK" != "true" ]; then
     bash "$SCRIPT_DIR/01_dump_apk_versions.sh" --phase "$PHASE" --suffix before
+    if [ "${CHECK_APK_SHA256:-true}" = "true" ]; then
+        bash "$SCRIPT_DIR/01_dump_apk_sha256.sh" --phase "$PHASE" --suffix before
+    fi
 fi
 
 if [ "$SKIP_DEXOPT_BEFORE" != "true" ]; then

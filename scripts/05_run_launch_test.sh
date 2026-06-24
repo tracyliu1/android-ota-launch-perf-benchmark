@@ -7,7 +7,7 @@
 # 行为:
 #   1. 读取 config.sh 中的 APP_LIST_FILE / LAUNCH_COUNT / LAUNCH_INTERVAL
 #   2. 对每个 app: 每轮 force-stop → am start -W (循环 c 次，间隔 s 秒)
-#   3. 解析 TotalTime，输出 CSV + XLSX（若 openpyxl 可用）
+#   3. 解析 TotalTime，输出聚合 CSV/XLSX（若 openpyxl 可用）和 per-attempt CSV
 #   4. 记录 started_at / ended_at 到 launch_window.txt
 #
 # 平台说明:
@@ -76,6 +76,7 @@ STARTED=$(ts_epoch)
 # 输出文件
 CSV_OUT="$OUT_DIR/apps_launch_${PHASE}.csv"
 XLSX_OUT="$OUT_DIR/apps_launch_${PHASE}.xlsx"
+ATTEMPT_CSV_OUT="$OUT_DIR/apps_launch_attempts_${PHASE}.csv"
 
 # 写 CSV header
 {
@@ -83,6 +84,8 @@ XLSX_OUT="$OUT_DIR/apps_launch_${PHASE}.xlsx"
     for i in $(seq 1 $COUNT); do echo -n ",t${i}"; done
     echo ",avg,status"
 } > "$CSV_OUT"
+
+echo "package,activity,attempt,attempt_start_epoch,attempt_start_iso,attempt_end_epoch,attempt_end_iso,total_time_ms,status,error" > "$ATTEMPT_CSV_OUT"
 
 log_info "Starting launch tests..."
 
@@ -113,22 +116,39 @@ while IFS= read -r line || [ -n "$line" ]; do
         sleep 1
 
         # am start -W 输出 TotalTime: xxx
+        attempt_start=$(ts_epoch)
+        attempt_start_iso=$(ts_iso)
         out=$(adb shell "am start -W -n ${pkg}/${act}" </dev/null 2>&1) || {
+            attempt_end=$(ts_epoch)
+            attempt_end_iso=$(ts_iso)
             log_warn "  am start failed for $pkg (attempt $i)"
             status="ERROR"
             times+=(-1)
+            err=$(printf '%s' "$out" | tr '\r\n,' '   ' | cut -c1-300)
+            printf '%s,%s,%s,%s,%s,%s,%s,,ERROR,"%s"\n' \
+                "$pkg" "$act_raw" "$i" "$attempt_start" "$attempt_start_iso" \
+                "$attempt_end" "$attempt_end_iso" "$err" >> "$ATTEMPT_CSV_OUT"
             continue
         }
+        attempt_end=$(ts_epoch)
+        attempt_end_iso=$(ts_iso)
         t=$(echo "$out" | awk '/^TotalTime:/ {print $2; exit}' || true)
         if [ -z "$t" ] || ! [[ "$t" =~ ^[0-9]+$ ]]; then
             log_warn "  Cannot parse TotalTime for $pkg (attempt $i). Output was:"
             echo "$out" | sed 's/^/    /' >&2
             status="ERROR"
             times+=(-1)
+            err=$(printf '%s' "$out" | tr '\r\n,' '   ' | cut -c1-300)
+            printf '%s,%s,%s,%s,%s,%s,%s,,ERROR,"%s"\n' \
+                "$pkg" "$act_raw" "$i" "$attempt_start" "$attempt_start_iso" \
+                "$attempt_end" "$attempt_end_iso" "$err" >> "$ATTEMPT_CSV_OUT"
             continue
         fi
         times+=("$t")
         log_info "  attempt $i: ${t}ms"
+        printf '%s,%s,%s,%s,%s,%s,%s,%s,ok,\n' \
+            "$pkg" "$act_raw" "$i" "$attempt_start" "$attempt_start_iso" \
+            "$attempt_end" "$attempt_end_iso" "$t" >> "$ATTEMPT_CSV_OUT"
 
         if [ "$i" -lt "$COUNT" ]; then
             sleep "$SLEEP_SEC"

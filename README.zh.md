@@ -186,11 +186,23 @@ EVIDENCE_RUN_TAG=""           # 可选；留空=当天 MMDD，例如 0617
 APP_LIST_FILE="apps.txt"      # App 清单路径
 LAUNCH_COUNT=5                # 每个 App 启动次数
 LAUNCH_INTERVAL=10            # 启动间隔（秒）
+TIMELINE_INTERVAL_SEC=10      # timeline 采样间隔（秒）
 DEVICE_TMPDIR="/data/local/tmp/ota_perf_benchmark"
 HAS_VAB=true                  # 设备是否使用 VAB 分区
 ```
 
 默认输出目录为 `evidence/<MMDD>/<device-tag>_<PHASE>/`。同一天重复跑同一 phase 时，可用 `EVIDENCE_RUN_TAG=0617_run2` 避免覆盖。
+
+关键配置都支持命令级环境变量覆盖，不需要为多设备测试反复改 `config.sh`：
+
+```bash
+ANDROID_SERIAL=<serial> \
+DEVICE_SERIAL=<serial> \
+EVIDENCE_DEVICE_TAG=MyDevice \
+APP_LIST_FILE="$PWD/scripts/apps.txt" \
+TIMELINE_INTERVAL_SEC=5 \
+bash scripts/06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
+```
 
 ### 脚本一览
 
@@ -198,8 +210,9 @@ HAS_VAB=true                  # 设备是否使用 VAB 分区
 |------|------|---------|
 | `00_env_check.sh` | 实验前环境检查 + 设备身份归档 | 通用 |
 | `01_dump_apk_versions.sh` | 采集 APK versionCode / versionName | 通用 |
+| `01_dump_apk_sha256.sh` | 采集 APK 内容哈希 | 通用 |
 | `02_dump_dexopt_state.sh` | 采集 dexopt filter / odex / vdex 状态 | 支持常见 Android 12/14 dumpsys 格式 |
-| `03_timeline_sampler.sh` | Host 端轮询系统负载（每 30s） | 通用 |
+| `03_timeline_sampler.sh` | Host 端轮询系统负载、供电、CPUFreq、thermal | 通用 |
 | `04_logcat_recorder.sh` | Logcat 滚动录制 | 通用 |
 | `05_run_launch_test.sh` | 内置 `am start -W` 启动测试循环 | 通用 |
 | `06_run_phase_with_timeline.sh` | 单轮测试 wrapper，绑定 timeline 生命周期并自动归档 | 通用 |
@@ -215,10 +228,14 @@ HAS_VAB=true                  # 设备是否使用 VAB 分区
 | `mem_total_kb` / `mem_avail_kb` | `cat /proc/meminfo` | 判断内存是否充足、有无泄漏 |
 | `dex2oat_count` | `pidof dex2oat` | **关键**：后台是否在偷偷编译 dex |
 | `dex2oat_cpu_pct` | `top -n1 -p <pid>` | dex2oat 占用了多少 CPU |
-| `iowait_pct` | `top` 汇总行 | **关键**：VAB merge 或 dexopt 是否在抢 I/O |
+| `iowait_pct` | `/proc/stat` delta | **关键**：VAB merge 或 dexopt 是否在抢 I/O |
 | `merge_status` | `cmd update_engine merge_status` | VAB merge 是否完成 |
+| `ac_powered` / `usb_powered` | `dumpsys battery` | 对比 AC/USB 供电状态 |
+| `max_charging_current` / `battery_level` / `battery_temp` | `dumpsys battery` | 追踪测试期间供电和电池状态 |
+| `policy*_cur_freq/min_freq/max_freq/governor` | `/sys/devices/system/cpu/cpufreq/policy*` | 追踪 CPU 频率和 governor |
+| `thermal_max_temp` / `thermal_max_type` | `/sys/class/thermal/thermal_zone*` | 观察 thermal 压力或限频线索 |
 
-- **采集频率**：每 30 秒一次
+- **采集频率**：由 `TIMELINE_INTERVAL_SEC` 控制，默认 10 秒
 - **采集方式**：host 端轮询（通过 `adb shell`），不依赖设备端后台进程
 - **为什么重要**：如果测试期间 `dex2oat_count > 0` 或 `iowait > 5%`，说明后台任务在干扰，对比结果不公平
 
@@ -240,6 +257,7 @@ HAS_VAB=true                  # 设备是否使用 VAB 分区
 |------|------|
 | `versionCode` / `versionName` | 排除"同一个包名但版本不同"导致的启动时间差异 |
 | `codePath` | 确认 App 安装在 system 分区还是 data 分区 |
+| `sha256` | 排除 versionCode 相同但 APK 内容不同（由 `01_dump_apk_sha256.sh` 采集） |
 
 - **采集时机**：每轮测试前一次
 - **为什么重要**：OTA 通常会同步升级预装 App，如果不记录 versionCode，就无法区分"ROM 差异"和"App 版本差异"
@@ -297,6 +315,14 @@ com.example.device.reader,.main.ui.MainActivity,1120,980,970,960,955,997,ok
 
 若安装了 `openpyxl`，会自动生成同名的 `.xlsx`。
 
+同时会输出每次启动的明细 CSV：
+
+```csv
+package,activity,attempt,attempt_start_epoch,attempt_start_iso,attempt_end_epoch,attempt_end_iso,total_time_ms,status,error
+```
+
+这个文件用于把每次 `am start -W` 和 timeline 采样点按时间对齐。
+
 ### 2. dexopt 状态输出
 
 `02_dump_dexopt_state.sh` 产出 CSV：
@@ -324,6 +350,18 @@ pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,...
 - 查看 T2 测试期前 5 分钟的 `iowait_pct`
 - 若出现 5~20% 峰值而 T1/T4 同时段为 0 → VAB merge 或 dexopt 抢占 I/O
 
+**跨设备对比报告**：
+
+```bash
+python3 scripts/07_compare_launch_results.py \
+  --device Hera=evidence/0624_tri/Hera_T0 \
+  --device MusePromax=evidence/0624_tri/MusePromax_T0 \
+  --device Libai=evidence/0624_tri/Libai_T0 \
+  --out evidence/0624_tri/launch_compare.xlsx
+```
+
+报告会输出共同成功 App、两两差异、dexopt join、版本 join；如果存在 `apk_sha256_before.csv`，也会把 APK 哈希一致性放进去。
+
 ---
 
 ## 已知限制
@@ -332,7 +370,9 @@ pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,...
 
 2. **merge_status 依赖设备命令**：`03_timeline_sampler.sh` 中的 `merge_status` 字段依赖 `cmd update_engine merge_status`。部分设备不支持此命令，不支持时该列会显示 `UNKNOWN`，不影响其他字段采集。
 
-3. **`am start -W` 对 Launcher 的固有局限**：`com.android.launcher3`（默认 Home Activity）在 `force-stop` 后会被 SystemServer 立即重启，导致 `TotalTime` 为 0 或异常。这是 `am start -W` 工具本身的限制，**不是脚本 bug**。建议将 Launcher 排除在统计之外。
+3. **CPU 和 thermal sysfs 路径存在平台差异**：timeline 会读取常见的 `/sys/devices/system/cpu/cpufreq/policy*` 和 `/sys/class/thermal/thermal_zone*`。如果设备不暴露或权限受限，对应字段会留空。
+
+4. **`am start -W` 对 Launcher 的固有局限**：`com.android.launcher3`（默认 Home Activity）在 `force-stop` 后会被 SystemServer 立即重启，导致 `TotalTime` 为 0 或异常。这是 `am start -W` 工具本身的限制，**不是脚本 bug**。建议将 Launcher 排除在统计之外。
 
 ---
 

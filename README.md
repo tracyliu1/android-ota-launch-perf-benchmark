@@ -188,11 +188,23 @@ EVIDENCE_RUN_TAG=""           # Optional; empty = current MMDD, e.g. 0617
 APP_LIST_FILE="apps.txt"      # Path to app list
 LAUNCH_COUNT=5                # Launches per app
 LAUNCH_INTERVAL=10            # Interval in seconds
+TIMELINE_INTERVAL_SEC=10      # Timeline sampling interval
 DEVICE_TMPDIR="/data/local/tmp/ota_perf_benchmark"
 HAS_VAB=true                  # Whether device uses VAB partitions
 ```
 
 The default artifact directory is `evidence/<MMDD>/<device-tag>_<PHASE>/`. For repeated runs of the same phase on the same day, set `EVIDENCE_RUN_TAG=0617_run2` to avoid overwriting previous output.
+
+All key settings can be overridden per command without editing `config.sh`:
+
+```bash
+ANDROID_SERIAL=<serial> \
+DEVICE_SERIAL=<serial> \
+EVIDENCE_DEVICE_TAG=MyDevice \
+APP_LIST_FILE="$PWD/scripts/apps.txt" \
+TIMELINE_INTERVAL_SEC=5 \
+bash scripts/06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
+```
 
 ### Script Reference
 
@@ -200,8 +212,9 @@ The default artifact directory is `evidence/<MMDD>/<device-tag>_<PHASE>/`. For r
 |--------|---------|---------------|
 | `00_env_check.sh` | Pre-flight env check + device identity archive | Universal |
 | `01_dump_apk_versions.sh` | Collect APK versionCode / versionName | Universal |
+| `01_dump_apk_sha256.sh` | Collect APK content hash | Universal |
 | `02_dump_dexopt_state.sh` | Collect dexopt filter / odex / vdex state | Supports common Android 12/14 dumpsys formats |
-| `03_timeline_sampler.sh` | Host-side polling of system load (every 30s) | Universal |
+| `03_timeline_sampler.sh` | Host-side polling of system load, power, CPUFreq, thermal | Universal |
 | `04_logcat_recorder.sh` | Rolling logcat recording | Universal |
 | `05_run_launch_test.sh` | Built-in `am start -W` launch loop | Universal |
 | `06_run_phase_with_timeline.sh` | Single-test wrapper that binds timeline lifecycle and archive checks | Universal |
@@ -217,10 +230,14 @@ The default artifact directory is `evidence/<MMDD>/<device-tag>_<PHASE>/`. For r
 | `mem_total_kb` / `mem_avail_kb` | `cat /proc/meminfo` | Judge memory sufficiency / leaks |
 | `dex2oat_count` | `pidof dex2oat` | **Critical**: whether bg dexopt is running |
 | `dex2oat_cpu_pct` | `top -n1 -p <pid>` | How much CPU dex2oat consumes |
-| `iowait_pct` | `top` summary line | **Critical**: whether VAB merge or dexopt is grabbing I/O |
+| `iowait_pct` | `/proc/stat` delta | **Critical**: whether VAB merge or dexopt is grabbing I/O |
 | `merge_status` | `cmd update_engine merge_status` | Whether VAB merge is complete |
+| `ac_powered` / `usb_powered` | `dumpsys battery` | Compare AC vs USB charging state |
+| `max_charging_current` / `battery_level` / `battery_temp` | `dumpsys battery` | Track power and battery state during the run |
+| `policy*_cur_freq/min_freq/max_freq/governor` | `/sys/devices/system/cpu/cpufreq/policy*` | Track CPUFreq and governor behavior |
+| `thermal_max_temp` / `thermal_max_type` | `/sys/class/thermal/thermal_zone*` | Detect thermal pressure or throttling clues |
 
-- **Sampling frequency**: every 30 seconds
+- **Sampling frequency**: controlled by `TIMELINE_INTERVAL_SEC` (default: 10 seconds)
 - **Sampling method**: host-side polling via `adb shell`, no device-side daemon needed
 - **Why it matters**: if `dex2oat_count > 0` or `iowait > 5%` during testing, background tasks are interfering and the comparison is unfair
 
@@ -242,6 +259,7 @@ The default artifact directory is `evidence/<MMDD>/<device-tag>_<PHASE>/`. For r
 |-------|---------|
 | `versionCode` / `versionName` | Rule out "same package name but different version" causing startup time differences |
 | `codePath` | Confirm whether app is installed on system partition or data partition |
+| `sha256` | Rule out same versionCode but different APK content (`01_dump_apk_sha256.sh`) |
 
 - **Collection timing**: once before each test
 - **Why it matters**: OTA usually upgrades pre-installed apps simultaneously. Without recording versionCode, you cannot distinguish "ROM difference" from "App version difference".
@@ -299,6 +317,14 @@ com.example.device.reader,.main.ui.MainActivity,1120,980,970,960,955,997,ok
 
 If `openpyxl` is installed, an `.xlsx` with the same name is generated automatically.
 
+`05_run_launch_test.sh` also writes a per-attempt CSV:
+
+```csv
+package,activity,attempt,attempt_start_epoch,attempt_start_iso,attempt_end_epoch,attempt_end_iso,total_time_ms,status,error
+```
+
+Use this file to align each `am start -W` attempt with timeline samples.
+
 ### 2. dexopt State Output
 
 `02_dump_dexopt_state.sh` produces CSV:
@@ -326,6 +352,18 @@ After collecting all 5 test datasets, analyze as follows:
 - Check `iowait_pct` during the first ~5 minutes of T2 test window
 - If 5~20% spikes appear while T1/T4 show 0% at the same period → VAB merge or dexopt is consuming I/O
 
+**Cross-device comparison report**:
+
+```bash
+python3 scripts/07_compare_launch_results.py \
+  --device Hera=evidence/0624_tri/Hera_T0 \
+  --device MusePromax=evidence/0624_tri/MusePromax_T0 \
+  --device Libai=evidence/0624_tri/Libai_T0 \
+  --out evidence/0624_tri/launch_compare.xlsx
+```
+
+The report contains common successful Apps, pairwise deltas, dexopt joins, version joins, and optional APK sha256 joins if `apk_sha256_before.csv` is present.
+
 ---
 
 ## Known Limitations
@@ -334,7 +372,9 @@ After collecting all 5 test datasets, analyze as follows:
 
 2. **merge_status depends on device command**: The `merge_status` column in `03_timeline_sampler.sh` relies on `cmd update_engine merge_status`. Some devices do not support this command; when unsupported, the column will show `UNKNOWN` without affecting other fields.
 
-3. **`am start -W` limitation for Launcher**: `com.android.launcher3` (the default Home Activity) is immediately restarted by SystemServer after `force-stop`, causing `TotalTime` to be 0 or abnormal. This is an inherent limitation of the `am start -W` tool, **not a script bug**. It is recommended to exclude Launcher from statistics.
+3. **CPU and thermal sysfs paths vary by platform**: timeline captures common `/sys/devices/system/cpu/cpufreq/policy*` and `/sys/class/thermal/thermal_zone*` paths. Missing fields are left empty when a device blocks or does not expose a node.
+
+4. **`am start -W` limitation for Launcher**: `com.android.launcher3` (the default Home Activity) is immediately restarted by SystemServer after `force-stop`, causing `TotalTime` to be 0 or abnormal. This is an inherent limitation of the `am start -W` tool, **not a script bug**. It is recommended to exclude Launcher from statistics.
 
 ---
 

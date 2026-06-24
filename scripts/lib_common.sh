@@ -290,6 +290,9 @@ cmd_archive() {
 
     check_file "device_id.txt"            "device identity dump (00_env_check)"
     check_file "apk_versions_before.csv"  "apk versionCode dump (10_dump_apk_versions)"
+    if [ "${CHECK_APK_SHA256:-true}" = "true" ]; then
+        check_file "apk_sha256_before.csv" "APK sha256 dump (01_dump_apk_sha256)"
+    fi
     check_file "dexopt_before.csv"        "dexopt state, pre-test (11_dump_dexopt_state)"
     check_file "dexopt_after.csv"         "dexopt state, post-test (11_dump_dexopt_state)"
     check_file "launch_raw"               "launch test output dir (30_run_launch_test)"
