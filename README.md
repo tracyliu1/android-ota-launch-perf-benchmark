@@ -1,10 +1,10 @@
-# Android OTA Launch Performance Benchmark
+# Android App Launch Performance Benchmark & Evidence Toolkit
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-A reusable benchmark **toolkit** for comparing **App cold-start performance** between **OTA upgrade** and **fresh flash** paths on Android devices. Includes automation scripts, recommended experiment design, data analysis framework, and AI assistant prompts.
+A reusable toolkit for Android **App cold-start benchmarking**, **multi-device comparison**, and **performance evidence collection**. It captures launch timing together with APK identity, dexopt state, power state, CPUFreq, thermal, memory, load, and I/O signals so performance differences can be explained instead of only observed.
 
-> **One-sentence pitch**: This toolkit answers the core question — *"Is my App slower after OTA because the ROM itself is bad, or is it just a transient side-effect of the OTA process?"*
+OTA-vs-flash comparison is one supported scenario. The same workflow also applies to factory-reset baselines, cross-device comparison, ROM version comparison, and regression investigation.
 
 [中文完整版 → README.zh.md](README.zh.md)
 
@@ -15,7 +15,7 @@ A reusable benchmark **toolkit** for comparing **App cold-start performance** be
 - [Quick Start](#quick-start)
 - [Project Background](#project-background)
 - [Core Concepts](#core-concepts)
-- [Recommended Experiment Design](#recommended-experiment-design)
+- [Recommended Comparison Patterns](#recommended-comparison-patterns)
 - [Script Usage](#script-usage)
 - [Output Format & Data Analysis](#output-format--data-analysis)
 - [Known Limitations](#known-limitations)
@@ -26,15 +26,17 @@ A reusable benchmark **toolkit** for comparing **App cold-start performance** be
 
 ## Project Background
 
-This toolkit originated from a real-world problem: **the App team questioned why the same ROM version produced different cold-start speeds between flash and OTA paths**.
+This toolkit originated from a real-world OTA-vs-flash investigation: **the App team questioned why the same ROM version produced different cold-start speeds between flash and OTA paths**.
 
-To independently verify this claim, we gradually built up:
+During that work, the scripts evolved into a more general launch-performance evidence pipeline:
 - Reproducible cold-start test scripts (`am start -W`)
-- Device system state collection (CPU, memory, load, I/O)
-- dexopt compilation state tracking (filter / odex / vdex)
-- A complete 5-Test comparative experiment design
+- APK version and content-hash snapshots
+- dexopt compilation state tracking (filter / reason / odex / vdex)
+- Device system state collection (power, CPUFreq, thermal, memory, load, I/O)
+- Per-attempt launch records that can be aligned with timeline samples
+- Cross-device comparison reports for common successful Apps
 
-These accumulations were eventually packaged into a **reusable open-source testing toolkit**.
+The OTA 5-Test matrix remains documented as a recommended scenario, but it is no longer the only intended use.
 
 ---
 
@@ -64,12 +66,13 @@ cp config.template.sh config.sh
 cp apps.template.txt apps.txt
 
 # Edit apps.txt: fill in your target packages and activities
-# Edit config.sh (usually just confirm DEVICE_SERIAL and APP_LIST_FILE)
+# Optional: edit local config.sh for stable defaults
+# Prefer environment variables for DEVICE_SERIAL / EVIDENCE_DEVICE_TAG in multi-device runs
 ```
 
 ### 4. Run a Single Test
 
-Use `T`-prefixed test IDs such as `T1_Demo` or `T2_OTA_Immediate`. The `--phase` argument is the output label; using `T*` labels keeps new runs distinct from older P-based examples.
+Use `T`-prefixed test IDs such as `T1_Demo`, `T1_Baseline`, or `T2_AfterReset`. The `--phase` argument is only the output label.
 
 ```bash
 # One command for env check, APK versions, dexopt before/after, timeline, launch test, and archive
@@ -99,6 +102,26 @@ python3 ../../scripts/analyze_launch.py
 
 ## Core Concepts
 
+### Cold Start (Industry Definition)
+
+Aligned with Google Macrobenchmark and mainstream APM tools:
+
+- `am force-stop <pkg>` followed by first `am start -W` **TotalTime**
+- Process cleared, but pagecache **partially warm**
+- **Not** the "true cold start" after reboot (pagecache fully cold) — that metric is **not** used for cross-device comparisons in the industry either
+
+### Evidence Alignment
+
+Before comparing launch time, align or archive at least:
+
+- Same App list and common successful Apps
+- APK `versionCode` / `versionName` / `sha256`
+- dexopt `filter` / `reason` and oat/vdex existence
+- Charging source, current limit, battery level, and battery temperature
+- CPUFreq, governor, and thermal state
+- `dex2oat` activity and `iowait` during the test window
+- Device identity, build fingerprint, slot state, and uptime
+
 ### Transient vs Steady State
 
 | State | Definition | Why it matters |
@@ -107,14 +130,6 @@ python3 ../../scripts/analyze_launch.py
 | **Steady State** | After ≥72h of charging + screen-off idle, background tasks converged | Only steady-state comparisons are meaningful |
 
 > **Key insight**: The transient cost of OTA path is typically **1.7~3.6×** that of flash path (cold-start delta), because the system still has VAB merge, bg-dexopt, and other post-OTA work to finish.
-
-### Cold Start (Industry Definition)
-
-Aligned with Google Macrobenchmark and mainstream APM tools:
-
-- `am force-stop <pkg>` followed by first `am start -W` **TotalTime**
-- Process cleared, but pagecache **partially warm**
-- **Not** the "true cold start" after reboot (pagecache fully cold) — that metric is **not** used for cross-device comparisons in the industry either
 
 ### The 5-Launch Convention
 
@@ -151,9 +166,23 @@ Pass criteria:
 
 ---
 
-## Recommended Experiment Design
+## Recommended Comparison Patterns
 
-### The 5-Test Matrix
+### 1. Same Device, Before vs After
+
+Use the same physical device to compare two phases, for example before/after OTA, before/after reset, or before/after a system configuration change.
+
+### 2. Two Devices, Same Build
+
+Use two devices on the same ROM build and App set to investigate hardware, configuration, dexopt, power, or thermal differences. This is the common pattern for `Hera` vs `MusePromax` style analysis.
+
+### 3. Factory-Reset Baseline
+
+Factory reset all target devices, align App list and power setup, then run the same phase label on each device. This is useful when previous runs already diverged in dexopt state or background setup.
+
+### 4. OTA vs Flash Scenario
+
+The original OTA investigation can still use the 5-Test matrix:
 
 | ID | Device | ROM | Timing | Meaning |
 |----|--------|-----|--------|---------|
@@ -163,7 +192,7 @@ Pass criteria:
 | T4 | B | vNew (flash) | Immediately after flash | Flash path immediate state |
 | T5 | B | vNew (flash) | Steady state (≥72h) | Flash path steady state |
 
-> **Hardware requirement**: Devices A and B must be **same model, same batch** to control hardware variables.
+> **Hardware requirement**: for strict OTA-vs-flash attribution, Devices A and B should be **same model, same batch** to control hardware variables.
 
 ### Three Core Comparisons
 
@@ -179,13 +208,13 @@ Pass criteria:
 
 ### Configuration
 
-All scripts share `scripts/config.sh` (copied from `config.template.sh`). Key items:
+All scripts read defaults from `scripts/config.sh` when it exists. This file is local runtime configuration copied from `config.template.sh` and is intentionally ignored by git. Do not store team-wide hardcoded device serials or device tags in it; use environment variables for multi-device runs. Key items:
 
 ```bash
 DEVICE_SERIAL=""              # Empty = auto-detect single device
 EVIDENCE_DEVICE_TAG=""        # Empty = auto-detect output device tag from adb properties
 EVIDENCE_RUN_TAG=""           # Optional; empty = current MMDD, e.g. 0617
-APP_LIST_FILE="apps.txt"      # Path to app list
+APP_LIST_FILE="apps.txt"      # Path to app list; can point to a validated project list
 LAUNCH_COUNT=5                # Launches per app
 LAUNCH_INTERVAL=10            # Interval in seconds
 TIMELINE_INTERVAL_SEC=10      # Timeline sampling interval
@@ -262,7 +291,7 @@ bash scripts/06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 | `sha256` | Rule out same versionCode but different APK content (`01_dump_apk_sha256.sh`) |
 
 - **Collection timing**: once before each test
-- **Why it matters**: OTA usually upgrades pre-installed apps simultaneously. Without recording versionCode, you cannot distinguish "ROM difference" from "App version difference".
+- **Why it matters**: without recording versionCode and content hash, you cannot distinguish "ROM/system difference" from "App version/content difference".
 
 #### 4. Device Identity Archive (`00_env_check.sh`)
 
@@ -274,19 +303,19 @@ bash scripts/06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 | `ro.virtual_ab.enabled` | `getprop` | Confirm whether device uses VAB |
 | `uptime` | `uptime` / `/proc/uptime` | Record how long device has been running |
 
-- **Why it matters**: ensure the two comparison devices have identical hardware model; prove OTA actually performed slot switching
+- **Why it matters**: ensure comparison devices and builds are identifiable; in OTA scenarios, also prove slot switching actually happened
 
 #### 5. Full Logcat (`04_logcat_recorder.sh`)
 
 - **Captured content**: full buffer (`main` / `system` / `crash`, etc.), `threadtime` format
 - **Why it matters**: core evidence chain for post-hoc attribution
-  - VAB merge progress (`update_engine` / `snapuserd` logs)
+  - VAB merge progress in OTA scenarios (`update_engine` / `snapuserd` logs)
   - dex2oat trigger records (`dex2oat` / `BackgroundDexOptService` logs)
   - App launch anomalies (crash, ANR)
 
-### Continuous Timeline Across Tests (e.g. T2 → T3)
+### Continuous Timeline Across Tests
 
-After T2 test, **do not stop timeline**. Let the device charge with screen-off to enter steady state; timeline continues running until T3 test:
+For long-running transient-to-steady comparisons, **do not stop timeline** after the first phase. Let the device charge with screen-off to enter steady state; timeline continues running until the next phase:
 
 ```bash
 # T2 test
@@ -336,7 +365,15 @@ pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,...
 
 ### 3. Analysis Framework
 
-After collecting all 5 test datasets, analyze as follows:
+After collecting one or more test datasets, analyze in this order:
+
+1. Compare only common successful Apps.
+2. Check APK version and sha256 before interpreting launch deltas.
+3. Compare dexopt filter/reason and oat/vdex state before and after the run.
+4. Check whether dex2oat, iowait, thermal, or charging state changed during the run.
+5. Interpret launch-time deltas only after the evidence alignment above.
+
+For the OTA 5-Test scenario, continue with the deeper framework below:
 
 **Launch time**:
 - Compute per-test mean of "1st launch" and "avg of 5"
@@ -408,11 +445,15 @@ android-ota-launch-perf-benchmark/
 │   ├── lib_common.sh          # Common functions
 │   ├── 00_env_check.sh
 │   ├── 01_dump_apk_versions.sh
+│   ├── 01_dump_apk_sha256.sh
 │   ├── 02_dump_dexopt_state.sh
 │   ├── 03_timeline_sampler.sh
 │   ├── 04_logcat_recorder.sh
 │   ├── 05_run_launch_test.sh
-│   └── 06_run_phase_with_timeline.sh
+│   ├── 06_run_phase_with_timeline.sh
+│   ├── 07_compare_launch_results.py
+│   ├── analyze_launch.py
+│   └── analyze_timeline.py
 └── examples/
     ├── sample-apps.txt        # Minimal app list example
     └── sample-output/         # Output format examples (CSV)

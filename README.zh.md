@@ -1,24 +1,26 @@
-# Android OTA Launch Performance Benchmark
+# Android App 冷启动性能测试与证据采集工具
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-一套可复用的 **Android OTA 升级 vs 线刷 冷启动性能对比测试工具**。包含自动化采集脚本、推荐实验设计、数据分析框架和 AI 助手 Prompt。
+一套用于 Android **App 冷启动测试**、**多设备对比**和**性能证据采集**的工具。它不仅采集启动耗时，也同时归档 APK 版本/哈希、dexopt 状态、供电状态、CPUFreq、thermal、内存、负载、I/O 等信息，用来解释“为什么慢”，而不是只记录“慢了多少”。
 
-> **一句话**：本工具解决的核心问题 —— *“OTA 升级后 App 启动变慢，究竟是 ROM 本身的问题，还是 OTA 流程独有的瞬态副产物？”*
+OTA 前后对比是本工具支持的一个典型场景；同一套流程也适用于恢复出厂基线、多设备对比、ROM 版本对比和性能回归分析。
 
 ---
 
 ## 项目背景
 
-本工具起源于一个真实问题：**App 团队质疑"相同版本 ROM，线刷和 OTA 升级后，同一组 App 的冷启动速度不一致"**。
+本工具起源于一次真实的 OTA 升级 vs 线刷路径冷启动差异调查：**App 团队质疑"相同版本 ROM，线刷和 OTA 升级后，同一组 App 的冷启动速度不一致"**。
 
-为独立验证这一质疑，分析过程中逐步沉淀了：
+随着排查深入，脚本逐步演进成一套更通用的启动性能证据流水线：
 - 可复现的冷启动测试脚本（`am start -W`）
-- 设备系统状态采集（CPU、内存、负载、I/O）
-- dexopt 编译状态追踪（filter / odex / vdex）
-- 完整的 5-Test 对比实验设计
+- APK version 和内容哈希快照
+- dexopt 编译状态追踪（filter / reason / odex / vdex）
+- 设备系统状态采集（供电、CPUFreq、thermal、内存、负载、I/O）
+- 可与 timeline 对齐的逐次启动明细
+- 面向多设备共同成功 App 的对比报告
 
-最终将这些积累汇总为一套**可复用的开源测试工具**。
+OTA 5-Test 矩阵仍然保留为一个推荐场景，但不再是本项目唯一主线。
 
 ---
 
@@ -27,7 +29,7 @@
 - [Quick Start](#quick-start)
 - [项目背景](#项目背景)
 - [核心概念](#核心概念)
-- [推荐实验设计](#推荐实验设计)
+- [推荐对比模式](#推荐对比模式)
 - [脚本使用说明](#脚本使用说明)
 - [输出格式与数据分析](#输出格式与数据分析)
 - [已知限制](#已知限制)
@@ -62,12 +64,13 @@ cp config.template.sh config.sh
 cp apps.template.txt apps.txt
 
 # 编辑 apps.txt：填入你要测试的包名和 Activity
-# 编辑 config.sh（通常只需确认 DEVICE_SERIAL 和 APP_LIST_FILE）
+# 可选：编辑本地 config.sh 作为固定默认值
+# 多设备测试时，推荐通过环境变量传入 DEVICE_SERIAL / EVIDENCE_DEVICE_TAG
 ```
 
 ### 4. 执行单轮测试
 
-推荐使用 `T` 开头的测试编号，例如 `T1_Demo`、`T2_OTA_Immediate`。`--phase` 参数只是输出目录标签，建议统一使用 `T*` 命名，避免和历史文档中的 P 编号混淆。
+推荐使用 `T` 开头的测试编号，例如 `T1_Demo`、`T1_Baseline`、`T2_AfterReset`。`--phase` 参数只是输出目录标签。
 
 ```bash
 # 一键完成：环境检查、APK 版本、dexopt before/after、timeline、启动测试、归档
@@ -97,6 +100,26 @@ python3 ../../scripts/analyze_launch.py
 
 ## 核心概念
 
+### 冷启动（工业定义）
+
+本工具采用的口径与 Google Macrobenchmark、主流 APM 工具一致：
+
+- `am force-stop <pkg>` 后，第一次 `am start -W` 的 `TotalTime`
+- 进程被清空，但 pagecache **部分热**
+- **不是** reboot 后的"真冷启动"（那个口径业界也不用于对比测试）
+
+### 证据对齐
+
+比较启动耗时前，至少需要对齐或归档：
+
+- 相同 App 清单，以及共同成功启动的 App 集合
+- APK `versionCode` / `versionName` / `sha256`
+- dexopt `filter` / `reason` 以及 oat/vdex 是否存在
+- AC/USB 供电状态、限流信息、电量、电池温度
+- CPUFreq、governor、thermal 状态
+- 测试期间 dex2oat 和 iowait 是否活跃
+- 设备身份、build fingerprint、slot 状态、uptime
+
 ### 瞬态 vs 稳态
 
 | 状态 | 定义 | 为什么重要 |
@@ -105,14 +128,6 @@ python3 ../../scripts/analyze_launch.py
 | **稳态** | 充电+灭屏静置 ≥ 72 小时后，系统后台任务收敛 | 只有稳态对比才有意义 |
 
 > **关键经验**：OTA 路径的瞬态成本通常是线刷路径的 **1.7~3.6 倍**（冷启动差异），因为 OTA 后系统需要完成 VAB merge、bg-dexopt 等额外工作。
-
-### 冷启动（工业定义）
-
-本工具采用的口径与 Google Macrobenchmark、主流 APM 工具一致：
-
-- `am force-stop <pkg>` 后，第一次 `am start -W` 的 `TotalTime`
-- 进程被清空，但 pagecache **部分热**
-- **不是** reboot 后的"真冷启动"（那个口径业界也不用于对比测试）
 
 ### 5 次启动的用途
 
@@ -149,9 +164,23 @@ adb shell dumpsys battery | grep -E "AC powered|USB powered|level"
 
 ---
 
-## 推荐实验设计
+## 推荐对比模式
 
-### 5-Test 对比矩阵
+### 1. 同设备前后对比
+
+使用同一台物理设备对比两个阶段，例如 OTA 前后、恢复出厂前后、系统配置变更前后。
+
+### 2. 双设备同版本对比
+
+使用相同 ROM 构建和相同 App 集合的两台设备，排查硬件、配置、dexopt、供电、thermal 等差异。这是 Hera vs MusePromax 这类分析的常见模式。
+
+### 3. 恢复出厂基线
+
+将目标设备全部恢复出厂，统一 App 清单和供电方式，再在每台设备上执行相同 phase。当前序测试已经导致 dexopt 或后台状态发散时，这个模式尤其有用。
+
+### 4. OTA vs 线刷场景
+
+原始 OTA 调查仍然可以使用 5-Test 对比矩阵：
 
 | 代号 | 设备 | ROM | 测试时机 | 业务含义 |
 |------|------|-----|---------|---------|
@@ -161,7 +190,7 @@ adb shell dumpsys battery | grep -E "AC powered|USB powered|level"
 | **T4** | B | vNew（线刷）| 线刷后立即 | 线刷路径立即态 |
 | **T5** | B | vNew（线刷）| 线刷后稳态（≥72h）| 线刷路径稳态 |
 
-> **设备要求**：A、B 两台必须是**同型号、同批次**的设备，以控制硬件变量。
+> **设备要求**：若要严格归因 OTA vs 线刷路径，A、B 两台应尽量是**同型号、同批次**设备，以控制硬件变量。
 
 ### 三组核心对比
 
@@ -177,13 +206,13 @@ adb shell dumpsys battery | grep -E "AC powered|USB powered|level"
 
 ### 配置
 
-所有脚本共享 `scripts/config.sh`（从 `config.template.sh` 复制）。关键配置项：
+所有脚本会在存在时读取 `scripts/config.sh`。该文件是从 `config.template.sh` 复制出来的本地运行配置，默认被 git 忽略。不要在其中保存团队默认的设备 SN 或设备标签硬编码；多设备运行应通过环境变量传入。关键配置项：
 
 ```bash
 DEVICE_SERIAL=""              # 留空=自动检测唯一设备
 EVIDENCE_DEVICE_TAG=""        # 留空=从 adb 设备属性自动生成输出目录设备标签
 EVIDENCE_RUN_TAG=""           # 可选；留空=当天 MMDD，例如 0617
-APP_LIST_FILE="apps.txt"      # App 清单路径
+APP_LIST_FILE="apps.txt"      # App 清单路径；也可以指向项目验证清单
 LAUNCH_COUNT=5                # 每个 App 启动次数
 LAUNCH_INTERVAL=10            # 启动间隔（秒）
 TIMELINE_INTERVAL_SEC=10      # timeline 采样间隔（秒）
@@ -260,7 +289,7 @@ bash scripts/06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 | `sha256` | 排除 versionCode 相同但 APK 内容不同（由 `01_dump_apk_sha256.sh` 采集） |
 
 - **采集时机**：每轮测试前一次
-- **为什么重要**：OTA 通常会同步升级预装 App，如果不记录 versionCode，就无法区分"ROM 差异"和"App 版本差异"
+- **为什么重要**：如果不记录 versionCode 和内容哈希，就无法区分"ROM/系统差异"和"App 版本/内容差异"
 
 #### 4. 设备身份归档（`00_env_check.sh`）
 
@@ -272,19 +301,19 @@ bash scripts/06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 | `ro.virtual_ab.enabled` | `getprop` | 确认设备是否使用 VAB |
 | `uptime` | `uptime` / `/proc/uptime` | 记录测试时设备已运行多久 |
 
-- **为什么重要**：确保两台对比设备的硬件型号一致；证明 OTA 确实发生了 slot 切换
+- **为什么重要**：确保对比设备和构建信息可识别；在 OTA 场景下，也用于证明 slot 切换确实发生
 
 #### 5. 完整 Logcat（`04_logcat_recorder.sh`）
 
 - **采集内容**：全 buffer（`main` / `system` / `crash` 等），`threadtime` 格式
 - **为什么重要**：事后归因的核心证据链
-  - VAB merge 进度（`update_engine` / `snapuserd` 日志）
+  - OTA 场景下的 VAB merge 进度（`update_engine` / `snapuserd` 日志）
   - dex2oat 触发记录（`dex2oat` / `BackgroundDexOptService` 日志）
   - App 启动异常（crash、ANR）
 
-### 多轮连续采集（如 T2 → T3）
+### 多轮连续采集
 
-T2 测试完成后，**不要停止 timeline**，让设备继续充电+灭屏进入稳态，等 T3 测试时 timeline 仍在跑：
+对于瞬态到稳态的长周期对比，第一阶段测试完成后，**不要停止 timeline**，让设备继续充电+灭屏进入稳态，等下一阶段测试时 timeline 仍在跑：
 
 ```bash
 # T2 阶段
@@ -334,7 +363,15 @@ pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,...
 
 ### 3. 数据分析框架
 
-拿到 5 轮测试数据后，按以下框架分析：
+拿到一轮或多轮测试数据后，建议先按以下顺序分析：
+
+1. 只比较共同成功启动的 App。
+2. 先确认 APK version 和 sha256，再解释启动耗时差异。
+3. 对比测试前后的 dexopt filter/reason 以及 oat/vdex 状态。
+4. 检查测试期间 dex2oat、iowait、thermal、供电状态是否异常。
+5. 完成上述证据对齐后，再解释 launch time delta。
+
+如果是 OTA 5-Test 场景，再继续按下面的框架深入分析：
 
 **启动耗时**：
 - 计算每轮测试的"第 1 次启动"均值、"5 次平均"均值
@@ -406,11 +443,15 @@ android-ota-launch-perf-benchmark/
 │   ├── lib_common.sh          # 公共函数库
 │   ├── 00_env_check.sh
 │   ├── 01_dump_apk_versions.sh
+│   ├── 01_dump_apk_sha256.sh
 │   ├── 02_dump_dexopt_state.sh
 │   ├── 03_timeline_sampler.sh
 │   ├── 04_logcat_recorder.sh
 │   ├── 05_run_launch_test.sh
-│   └── 06_run_phase_with_timeline.sh
+│   ├── 06_run_phase_with_timeline.sh
+│   ├── 07_compare_launch_results.py
+│   ├── analyze_launch.py
+│   └── analyze_timeline.py
 └── examples/
     ├── sample-apps.txt        # 极简 App 列表示例
     └── sample-output/         # 输出格式示例（CSV）
