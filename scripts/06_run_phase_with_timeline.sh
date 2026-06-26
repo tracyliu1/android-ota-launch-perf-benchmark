@@ -98,6 +98,16 @@ if [ "$SKIP_DEXOPT_AFTER" != "true" ]; then
     bash "$SCRIPT_DIR/02_dump_dexopt_state.sh" --phase "$PHASE" --suffix after
 fi
 
+PHASE_DIR="$(phase_dir "$PHASE")"
+if [ -f "$PHASE_DIR/launch_raw/apps_launch_attempts_detail_${PHASE}.csv" ]; then
+    python3 "$SCRIPT_DIR/07_classify_launch_results.py" \
+        --phase-dir "$PHASE_DIR" \
+        --phase "$PHASE" \
+        --suffix before
+else
+    log_warn "Launch attempts detail CSV missing, skip classification"
+fi
+
 bash "$SCRIPT_DIR/03_timeline_sampler.sh" --phase "$PHASE" --stop
 TIMELINE_STARTED=false
 

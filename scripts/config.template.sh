@@ -30,9 +30,23 @@ APP_LIST_FILE="${APP_LIST_FILE:-${SCRIPT_DIR}/apps.txt}"
 
 # ---------- 启动测试参数 ----------
 # c = 每个 app 启动次数（业界常用 5）
-# s = 每次启动间隔秒数（至少 10s，让进程完全回收）
+# BETWEEN_ATTEMPT_SLEEP_SEC = 两次启动 attempt 之间的等待时间。
+#   目的: 给 force-stop、进程回收、系统状态稳定留时间；这不是 logcat 采集窗口。
+#   兼容旧参数: 未设置时会回退使用 LAUNCH_INTERVAL。
 LAUNCH_COUNT="${LAUNCH_COUNT:-5}"
 LAUNCH_INTERVAL="${LAUNCH_INTERVAL:-10}"
+BETWEEN_ATTEMPT_SLEEP_SEC="${BETWEEN_ATTEMPT_SLEEP_SEC:-${LAUNCH_INTERVAL}}"
+
+# ---------- 启动窗口 logcat 证据 ----------
+# LOGCAT_CAPTURE_SEC = am start -W 返回后继续等待多少秒再 logcat -d。
+#   目的: 覆盖 Displayed 后的短窗口日志，辅助观察候选怀疑项。
+# FULL_LOGCAT = 0 时只保存过滤后的低成本 evidence logcat；适合大规模测试。
+# FULL_LOGCAT = 1 时额外保存每个 attempt 的完整启动窗口 logcat；仅建议深挖少量 App 时开启。
+# KEYWORD_PATTERNS = evidence logcat 与统计使用的候选怀疑项关键字，使用 grep -E -i 语法。
+#   注意: 这些关键字只用于过滤日志和计数，不参与 success/strict/pass-fail 判断，也不等于最终归因。
+LOGCAT_CAPTURE_SEC="${LOGCAT_CAPTURE_SEC:-5}"
+FULL_LOGCAT="${FULL_LOGCAT:-0}"
+KEYWORD_PATTERNS="${KEYWORD_PATTERNS:-bytehook|rmonitor|shadowhook|bugly|eup|webview|chromium|SurfaceFlinger|C2MtkBufferManager}"
 
 # ---------- 屏幕控制 ----------
 # 测试期间是否强制保持亮屏

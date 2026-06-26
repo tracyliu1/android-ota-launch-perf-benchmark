@@ -217,10 +217,18 @@ EVIDENCE_RUN_TAG=""           # Optional; empty = current MMDD, e.g. 0617
 APP_LIST_FILE="apps.txt"      # Path to app list; can point to a validated project list
 LAUNCH_COUNT=5                # Launches per app
 LAUNCH_INTERVAL=10            # Interval in seconds
+BETWEEN_ATTEMPT_SLEEP_SEC=10  # Sleep between attempts; falls back to LAUNCH_INTERVAL
+LOGCAT_CAPTURE_SEC=5          # Seconds to capture launch-window logcat after am start returns
+FULL_LOGCAT=0                 # 0=low-cost filtered evidence; 1=full per-attempt logcat
+KEYWORD_PATTERNS="bytehook|rmonitor|shadowhook|bugly|eup|webview|chromium|SurfaceFlinger|C2MtkBufferManager"  # Candidate signals, not attribution conclusions
 TIMELINE_INTERVAL_SEC=10      # Timeline sampling interval
 DEVICE_TMPDIR="/data/local/tmp/ota_perf_benchmark"
 HAS_VAB=true                  # Whether device uses VAB partitions
 ```
+
+`BETWEEN_ATTEMPT_SLEEP_SEC` and `LOGCAT_CAPTURE_SEC` are separate knobs. The former waits between attempts for process cleanup and stability; the latter controls how long launch-window logcat is captured after `am start -W` returns. Keep `FULL_LOGCAT=0` for large runs, and enable `FULL_LOGCAT=1` only when drilling into a smaller App set.
+
+`KEYWORD_PATTERNS` is only a candidate-signal filter. Matches such as `bytehook/rmonitor/shadowhook/bugly/eup/webview/chromium/SurfaceFlinger/C2MtkBufferManager` mean those logs appeared in the launch window. They do not participate in success/strict classification and are not automatic root-cause conclusions.
 
 The default artifact directory is `evidence/<MMDD>/<device-tag>_<PHASE>/`. For repeated runs of the same phase on the same day, set `EVIDENCE_RUN_TAG=0617_run2` to avoid overwriting previous output.
 
@@ -247,6 +255,7 @@ bash scripts/06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 | `04_logcat_recorder.sh` | Rolling logcat recording | Universal |
 | `05_run_launch_test.sh` | Built-in `am start -W` launch loop | Universal |
 | `06_run_phase_with_timeline.sh` | Single-test wrapper that binds timeline lifecycle and archive checks | Universal |
+| `07_classify_launch_results.py` | Classifies attempts into strict/reference/excluded buckets | Universal |
 | `lib_common.sh` | Common functions + archive verification | Universal |
 
 ### Data Collection Details
@@ -354,6 +363,29 @@ package,activity,attempt,attempt_start_epoch,attempt_start_iso,attempt_end_epoch
 
 Use this file to align each `am start -W` attempt with timeline samples.
 
+The launch script also writes structured low-cost evidence:
+
+```text
+launch_raw/am_start_raw/                         # Raw am start -W output
+launch_raw/logcat_evidence/                      # Filtered launch-window logcat evidence
+launch_raw/logcat_full/                          # Only when FULL_LOGCAT=1
+launch_raw/apps_launch_attempts_detail_<T>.csv   # Per-attempt structured fields
+launch_raw/apps_launch_keyword_summary_<T>.csv   # Full-window and target-pid candidate-signal counts
+launch_raw/run_size_summary.txt                  # Output size summary
+```
+
+`06_run_phase_with_timeline.sh` automatically runs `07_classify_launch_results.py` after launch and dexopt collection, producing:
+
+```text
+launch_raw/apps_launch_attempts_classified_<T>.csv
+launch_raw/included_strict_<T>.csv
+launch_raw/reference_only_<T>.csv
+launch_raw/excluded_<T>.csv
+launch_raw/per_app_classification_summary_<T>.csv
+```
+
+Use `included_strict` for primary conclusions. Use `reference_only` only as supporting evidence, for example when `Displayed` exists but `TotalTime` is missing. Exclude non-cold starts, permission pages, missing/zero `TotalTime`, missing `Displayed`, and external-activity pollution. Different device models are not a filter condition by themselves; App identity, APK hash, dexopt state, launch component, final Activity, and Displayed Activity are the key comparability checks.
+
 ### 2. dexopt State Output
 
 `02_dump_dexopt_state.sh` produces CSV:
@@ -392,7 +424,7 @@ For the OTA 5-Test scenario, continue with the deeper framework below:
 **Cross-device comparison report**:
 
 ```bash
-python3 scripts/07_compare_launch_results.py \
+python3 scripts/08_compare_launch_results.py \
   --device Hera=evidence/0624_tri/Hera_T0 \
   --device MusePromax=evidence/0624_tri/MusePromax_T0 \
   --device Libai=evidence/0624_tri/Libai_T0 \
@@ -400,6 +432,8 @@ python3 scripts/07_compare_launch_results.py \
 ```
 
 The report contains common successful Apps, pairwise deltas, dexopt joins, version joins, and optional APK sha256 joins if `apk_sha256_before.csv` is present.
+
+When `included_strict_<T>.csv` exists in the input directories, the report also adds a `严格可比共同app` sheet. It keeps only Apps whose strict attempts exist on all devices and whose launch component, final Displayed Activity, APK version, APK sha256, and dexopt `filter/reason` are aligned. Use this sheet as the main conclusion view; the older common-App sheets remain broad reference views.
 
 ---
 
@@ -451,7 +485,7 @@ android-ota-launch-perf-benchmark/
 │   ├── 04_logcat_recorder.sh
 │   ├── 05_run_launch_test.sh
 │   ├── 06_run_phase_with_timeline.sh
-│   ├── 07_compare_launch_results.py
+│   ├── 08_compare_launch_results.py
 │   ├── analyze_launch.py
 │   └── analyze_timeline.py
 └── examples/

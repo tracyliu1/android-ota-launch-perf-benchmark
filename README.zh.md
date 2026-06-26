@@ -215,10 +215,23 @@ EVIDENCE_RUN_TAG=""           # 可选；留空=当天 MMDD，例如 0617
 APP_LIST_FILE="apps.txt"      # App 清单路径；也可以指向项目验证清单
 LAUNCH_COUNT=5                # 每个 App 启动次数
 LAUNCH_INTERVAL=10            # 启动间隔（秒）
+BETWEEN_ATTEMPT_SLEEP_SEC=10  # 两次启动 attempt 之间等待；未设置时回退 LAUNCH_INTERVAL
+LOGCAT_CAPTURE_SEC=5          # am start 返回后继续抓启动窗口 logcat 的秒数
+FULL_LOGCAT=0                 # 0=默认低成本 filtered logcat；1=深挖时保存完整 per-attempt logcat
+KEYWORD_PATTERNS="bytehook|rmonitor|shadowhook|bugly|eup|webview|chromium|SurfaceFlinger|C2MtkBufferManager"  # 候选怀疑项，不是归因结论
 TIMELINE_INTERVAL_SEC=10      # timeline 采样间隔（秒）
 DEVICE_TMPDIR="/data/local/tmp/ota_perf_benchmark"
 HAS_VAB=true                  # 设备是否使用 VAB 分区
 ```
+
+`BETWEEN_ATTEMPT_SLEEP_SEC` 和 `LOGCAT_CAPTURE_SEC` 不是一回事：
+
+- `BETWEEN_ATTEMPT_SLEEP_SEC` 控制两次启动之间的等待，用于让 `force-stop`、进程回收和系统状态稳定。
+- `LOGCAT_CAPTURE_SEC` 控制一次 `am start -W` 之后继续抓多久启动窗口日志，用于覆盖 `Displayed` 后的短窗口日志。
+
+大规模测试默认建议保持 `FULL_LOGCAT=0`。此时脚本只保存低成本 filtered logcat evidence 和结构化统计；需要深挖少量 App 时再设置 `FULL_LOGCAT=1` 保存完整启动窗口 logcat。
+
+`KEYWORD_PATTERNS` 只是候选怀疑项过滤器。`bytehook/rmonitor/shadowhook/bugly/eup/webview/chromium/SurfaceFlinger/C2MtkBufferManager` 这些命中只表示对应日志在启动窗口出现了多少次，不能自动等同于原因成立，也不参与 `strict_comparable` 或成功/失败判断。是否能归因，需要结合 Hera/MusePromax 对比、target pid 归属、启动耗时差异和原始日志内容人工判断。
 
 默认输出目录为 `evidence/<MMDD>/<device-tag>_<PHASE>/`。同一天重复跑同一 phase 时，可用 `EVIDENCE_RUN_TAG=0617_run2` 避免覆盖。
 
@@ -245,6 +258,7 @@ bash scripts/06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 | `04_logcat_recorder.sh` | Logcat 滚动录制 | 通用 |
 | `05_run_launch_test.sh` | 内置 `am start -W` 启动测试循环 | 通用 |
 | `06_run_phase_with_timeline.sh` | 单轮测试 wrapper，绑定 timeline 生命周期并自动归档 | 通用 |
+| `07_classify_launch_results.py` | 按可比性规则输出 strict/reference/excluded 样本 | 通用 |
 | `lib_common.sh` | 公共函数库 + 归档校验 | 通用 |
 
 ### 数据采集详情
@@ -352,6 +366,49 @@ package,activity,attempt,attempt_start_epoch,attempt_start_iso,attempt_end_epoch
 
 这个文件用于把每次 `am start -W` 和 timeline 采样点按时间对齐。
 
+新版启动脚本还会输出更细的证据文件：
+
+```text
+launch_raw/am_start_raw/                         # 每次 am start -W 原始输出
+launch_raw/logcat_evidence/                      # 默认保存的 filtered logcat evidence
+launch_raw/logcat_full/                          # 仅 FULL_LOGCAT=1 时生成
+launch_raw/apps_launch_attempts_detail_<T>.csv   # attempt 级结构化字段
+launch_raw/apps_launch_keyword_summary_<T>.csv   # keyword 全窗口/target pid 统计
+launch_raw/run_size_summary.txt                  # 本轮输出目录大小和最大 logcat 文件
+```
+
+`apps_launch_attempts_detail_<T>.csv` 包含：
+
+```text
+Status / LaunchState / Activity / TotalTime / WaitTime
+Displayed Activity / Displayed time
+first START / final START / Activity chain
+target pid
+候选怀疑项关键字全窗口命中和 target pid 命中
+```
+
+默认 filtered logcat evidence 会保留 `ActivityTaskManager`、`ActivityManager: Start proc` 和 `KEYWORD_PATTERNS` 命中的日志行；完整 raw logcat 只在 `FULL_LOGCAT=1` 时保存。`KEYWORD_PATTERNS` 命中是辅助证据，不是脚本自动归因。
+
+### 1.1 可比性分类输出
+
+`06_run_phase_with_timeline.sh` 会在启动测试和 dexopt after 后自动调用 `07_classify_launch_results.py`，输出：
+
+```text
+launch_raw/apps_launch_attempts_classified_<T>.csv
+launch_raw/included_strict_<T>.csv
+launch_raw/reference_only_<T>.csv
+launch_raw/excluded_<T>.csv
+launch_raw/per_app_classification_summary_<T>.csv
+```
+
+分类口径：
+
+- `strict_comparable`：用于主结论。要求 `Status=ok`、`LaunchState=COLD`、`TotalTime>0`、`Displayed` 存在、解析正常，且没有权限页/外部 Activity 干扰。
+- `reference_only`：只能做旁证。例如 `Files` 这类 `TotalTime` 缺失但 `Displayed` 可用，或二跳 Activity chain 需要单独解释。
+- `excluded`：不进入主结论。例如非 COLD、`TotalTime=0`、权限页、Displayed 缺失、外部 Activity 干扰等。
+
+设备型号不同不是不可比条件；多设备对比时应优先对齐 App 维度：共同包名、version、sha256、dexopt `filter/reason`、启动入口、最终 Activity 和 Displayed Activity。
+
 ### 2. dexopt 状态输出
 
 `02_dump_dexopt_state.sh` 产出 CSV：
@@ -390,7 +447,7 @@ pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,...
 **跨设备对比报告**：
 
 ```bash
-python3 scripts/07_compare_launch_results.py \
+python3 scripts/08_compare_launch_results.py \
   --device Hera=evidence/0624_tri/Hera_T0 \
   --device MusePromax=evidence/0624_tri/MusePromax_T0 \
   --device Libai=evidence/0624_tri/Libai_T0 \
@@ -398,6 +455,8 @@ python3 scripts/07_compare_launch_results.py \
 ```
 
 报告会输出共同成功 App、两两差异、dexopt join、版本 join；如果存在 `apk_sha256_before.csv`，也会把 APK 哈希一致性放进去。
+
+如果输入目录中存在 `included_strict_<T>.csv`，报告还会新增 `严格可比共同app` sheet。该 sheet 只保留多设备都满足 strict attempt，且启动入口、最终 Displayed Activity、APK version、APK sha256、dexopt `filter/reason` 全部一致的 App，用作主结论口径；旧的共同 App sheet 保留为宽口径参考。
 
 ---
 
@@ -449,7 +508,7 @@ android-ota-launch-perf-benchmark/
 │   ├── 04_logcat_recorder.sh
 │   ├── 05_run_launch_test.sh
 │   ├── 06_run_phase_with_timeline.sh
-│   ├── 07_compare_launch_results.py
+│   ├── 08_compare_launch_results.py
 │   ├── analyze_launch.py
 │   └── analyze_timeline.py
 └── examples/
