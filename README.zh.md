@@ -172,7 +172,7 @@ adb shell dumpsys battery | grep -E "AC powered|USB powered|level"
 
 ### 2. 双设备同版本对比
 
-使用相同 ROM 构建和相同 App 集合的两台设备，排查硬件、配置、dexopt、供电、thermal 等差异。这是 Hera vs MusePromax 这类分析的常见模式。
+使用相同 ROM 构建和相同 App 集合的两台设备，排查硬件、配置、dexopt、供电、thermal 等差异。这是 DeviceA vs DeviceB 这类分析的常见模式。
 
 ### 3. 恢复出厂基线
 
@@ -231,7 +231,7 @@ HAS_VAB=true                  # 设备是否使用 VAB 分区
 
 大规模测试默认建议保持 `FULL_LOGCAT=0`。此时脚本只保存低成本 filtered logcat evidence 和结构化统计；需要深挖少量 App 时再设置 `FULL_LOGCAT=1` 保存完整启动窗口 logcat。
 
-`KEYWORD_PATTERNS` 只是候选怀疑项过滤器。`bytehook/rmonitor/shadowhook/bugly/eup/webview/chromium/SurfaceFlinger/C2MtkBufferManager` 这些命中只表示对应日志在启动窗口出现了多少次，不能自动等同于原因成立，也不参与 `strict_comparable` 或成功/失败判断。是否能归因，需要结合 Hera/MusePromax 对比、target pid 归属、启动耗时差异和原始日志内容人工判断。
+`KEYWORD_PATTERNS` 只是候选怀疑项过滤器。`bytehook/rmonitor/shadowhook/bugly/eup/webview/chromium/SurfaceFlinger/C2MtkBufferManager` 这些命中只表示对应日志在启动窗口出现了多少次，不能自动等同于原因成立，也不参与 `strict_comparable` 或成功/失败判断。是否能归因，需要结合 DeviceA/DeviceB 对比、target pid 归属、启动耗时差异和原始日志内容人工判断。
 
 默认输出目录为 `evidence/<MMDD>/<device-tag>_<PHASE>/`。同一天重复跑同一 phase 时，可用 `EVIDENCE_RUN_TAG=0617_run2` 避免覆盖。
 
@@ -448,9 +448,9 @@ pkg,installed,isa,filter,reason,base_apk_path,oat_odex_size,...
 
 ```bash
 python3 scripts/08_compare_launch_results.py \
-  --device Hera=evidence/0624_tri/Hera_T0 \
-  --device MusePromax=evidence/0624_tri/MusePromax_T0 \
-  --device Libai=evidence/0624_tri/Libai_T0 \
+  --device DeviceA=evidence/0624_tri/DeviceA_T0 \
+  --device DeviceB=evidence/0624_tri/DeviceB_T0 \
+  --device DeviceC=evidence/0624_tri/DeviceC_T0 \
   --out evidence/0624_tri/launch_compare.xlsx
 ```
 

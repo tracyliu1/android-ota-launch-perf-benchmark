@@ -174,7 +174,7 @@ Use the same physical device to compare two phases, for example before/after OTA
 
 ### 2. Two Devices, Same Build
 
-Use two devices on the same ROM build and App set to investigate hardware, configuration, dexopt, power, or thermal differences. This is the common pattern for `Hera` vs `MusePromax` style analysis.
+Use two devices on the same ROM build and App set to investigate hardware, configuration, dexopt, power, or thermal differences. This is the common pattern for `DeviceA` vs `DeviceB` style analysis.
 
 ### 3. Factory-Reset Baseline
 
@@ -425,9 +425,9 @@ For the OTA 5-Test scenario, continue with the deeper framework below:
 
 ```bash
 python3 scripts/08_compare_launch_results.py \
-  --device Hera=evidence/0624_tri/Hera_T0 \
-  --device MusePromax=evidence/0624_tri/MusePromax_T0 \
-  --device Libai=evidence/0624_tri/Libai_T0 \
+  --device DeviceA=evidence/0624_tri/DeviceA_T0 \
+  --device DeviceB=evidence/0624_tri/DeviceB_T0 \
+  --device DeviceC=evidence/0624_tri/DeviceC_T0 \
   --out evidence/0624_tri/launch_compare.xlsx
 ```
 
