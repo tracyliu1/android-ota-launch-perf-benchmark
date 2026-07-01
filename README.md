@@ -221,6 +221,7 @@ BETWEEN_ATTEMPT_SLEEP_SEC=10  # Sleep between attempts; falls back to LAUNCH_INT
 LOGCAT_CAPTURE_SEC=5          # Seconds to capture launch-window logcat after am start returns
 FULL_LOGCAT=0                 # 0=low-cost filtered evidence; 1=full per-attempt logcat
 KEYWORD_PATTERNS="bytehook|rmonitor|shadowhook|bugly|eup|webview|chromium|SurfaceFlinger|C2MtkBufferManager"  # Candidate signals, not attribution conclusions
+HOOK_KEYWORDS="bytehook|rmonitor|shadowhook"  # Hook thread-level attribution (in-window main/worker hits, time span)
 TIMELINE_INTERVAL_SEC=10      # Timeline sampling interval
 DEVICE_TMPDIR="/data/local/tmp/ota_perf_benchmark"
 HAS_VAB=true                  # Whether device uses VAB partitions
@@ -431,9 +432,16 @@ python3 scripts/08_compare_launch_results.py \
   --out evidence/0624_tri/launch_compare.xlsx
 ```
 
-The report contains common successful Apps, pairwise deltas, dexopt joins, version joins, and optional APK sha256 joins if `apk_sha256_before.csv` is present.
+**The first `--device` is the baseline**; all deltas are relative to it. The report always contains 4 sheets:
 
-When `included_strict_<T>.csv` exists in the input directories, the report also adds a `严格可比共同app` sheet. It keeps only Apps whose strict attempts exist on all devices and whose launch component, final Displayed Activity, APK version, APK sha256, and dexopt `filter/reason` are aligned. Use this sheet as the main conclusion view; the older common-App sheets remain broad reference views.
+| sheet | Content | Scope |
+|-------|---------|-------|
+| **overview** | All common apps: per device `t1 / 5-run avg / CV% / dexopt / main-thread hook / hookSpan`; non-baseline devices get `Δms / Δ%`; plus `version-aligned / strict-comparable` flags | Broad (all 5 runs) |
+| **strict** | Strict-comparable common apps (primary conclusion view) + detail columns: component/displayed/dexopt(filter+reason)/version/sha, and per device strict count/avg/CV/min/max/t1/warm/displayed/cold_window/main-thread hook/worker hook/span/keyword hits, plus Δ for non-baseline devices | Only apps that are strict on every device with aligned launch component / Displayed / version / sha / dexopt |
+| **system_state** | Per-device timeline summary (governor / cur_freq / iowait / thermal / dex2oat) to rule out throttling / thermal / background dexopt | Phase-level |
+| **summary** | Common count, strict count, per-device means and Δ vs baseline (mean/median) | Aggregate |
+
+`main-thread hook / hookSpan` are filled only when attempt-detail data is present (empty for projects without hook). Use the **strict** sheet for primary conclusions; overview is a broad-scope reference.
 
 ---
 

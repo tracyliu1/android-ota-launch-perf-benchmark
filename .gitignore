@@ -15,3 +15,6 @@ notes/
 
 # Local ad-hoc analysis workbooks
 /*.xlsx
+
+# Internal, case-specific analysis scripts (contain real device/app names — not for open-source)
+scripts/gen_three_device_report.py

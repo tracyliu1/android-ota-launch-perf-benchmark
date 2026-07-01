@@ -44,9 +44,12 @@ BETWEEN_ATTEMPT_SLEEP_SEC="${BETWEEN_ATTEMPT_SLEEP_SEC:-${LAUNCH_INTERVAL}}"
 # FULL_LOGCAT = 1 时额外保存每个 attempt 的完整启动窗口 logcat；仅建议深挖少量 App 时开启。
 # KEYWORD_PATTERNS = evidence logcat 与统计使用的候选怀疑项关键字，使用 grep -E -i 语法。
 #   注意: 这些关键字只用于过滤日志和计数，不参与 success/strict/pass-fail 判断，也不等于最终归因。
+# HOOK_KEYWORDS = hook 线程级归因专用关键字（窗口内主线程/子线程命中、时间跨度），范围比 KEYWORD_PATTERNS 窄，
+#   只针对怀疑的 hook/监控库；同样不参与 success/strict 判断，仅作证据。
 LOGCAT_CAPTURE_SEC="${LOGCAT_CAPTURE_SEC:-5}"
 FULL_LOGCAT="${FULL_LOGCAT:-0}"
 KEYWORD_PATTERNS="${KEYWORD_PATTERNS:-bytehook|rmonitor|shadowhook|bugly|eup|webview|chromium|SurfaceFlinger|C2MtkBufferManager}"
+HOOK_KEYWORDS="${HOOK_KEYWORDS:-bytehook|rmonitor|shadowhook}"
 
 # ---------- 屏幕控制 ----------
 # 测试期间是否强制保持亮屏

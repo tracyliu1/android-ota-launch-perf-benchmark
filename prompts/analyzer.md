@@ -12,6 +12,22 @@ The user will provide:
 3. **Timeline data** (optional): CSV from `04_timeline/` (columns: epoch, loadavg, mem_avail_kb, dex2oat_count, iowait_pct, ...)
 4. **Phase IDs**: e.g., P1_A, P2_A, P3_A, P4_B, P5_B
 
+> Current evidence layout: `evidence/<run>/<device_phase>/` with `dexopt_before.csv`, `apk_versions_before.csv`, `launch_raw/`, `timeline/`. The P1-P5 framework below is one scenario; the same analysis applies to any multi-device comparison.
+
+## Cross-device standardized report (08_compare_launch_results.py)
+
+`08_compare_launch_results.py --device LABEL=dir ...` outputs a 4-sheet XLSX; **the first `--device` is the baseline**, all deltas are relative to it:
+
+- **overview** — all common apps: per device `t1 / 5-run avg / CV% / dexopt / main-thread hook / hookSpan`, non-baseline devices get `Δms / Δ%`, plus version/strict flags.
+- **strict** — strict-comparable common apps (primary conclusion view) with full detail columns + Δ.
+- **system_state** — per-device timeline (governor/freq/iowait/thermal/dex2oat) to rule out throttling/thermal/background dexopt.
+- **summary** — counts + per-device means + Δ vs baseline.
+
+When attributing cross-device差异, isolate one variable at a time (same-platform + same-dexopt pair → hook; etc.) and consider these dimensions:
+- **APK hook**: `main-thread hook / hookSpan` in overview/strict — hook on the cold-start main thread directly adds latency. Compare an app-paired hook vs no-hook split.
+- **dexopt state (speed-profile vs verify) + app warmup timing**: a device stuck at `verify` at test time is slower; whether it reached `speed-profile` depends on whether the app's warmup fired before the test (transient timing). Check `dexopt_before.csv` reason and, if available, boot logs for the warmup→`pm compile`(cmdline) trigger.
+- **Hardware/SoC**: same-dexopt + no-hook delta across different SoCs is a hardware baseline, not an app issue — surface it as a caveat.
+
 ## Analysis Framework
 
 Follow this exact structure in your response:

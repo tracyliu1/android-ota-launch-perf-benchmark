@@ -45,7 +45,11 @@ def find_single(directory, rel_dir, prefix, suffix):
         if name.startswith(prefix) and name.endswith(suffix)
     ]
     if prefix == "apps_launch_":
-        matches = [name for name in matches if "apps_launch_attempts_" not in os.path.basename(name)]
+        matches = [
+            name for name in matches
+            if "apps_launch_attempts_" not in os.path.basename(name)
+            and "apps_launch_keyword_summary_" not in os.path.basename(name)
+        ]
     if len(matches) != 1:
         raise RuntimeError(f"Expected one {prefix}*{suffix} under {path}, found {len(matches)}")
     return matches[0]
@@ -92,6 +96,85 @@ def to_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def to_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def cv_pct(values):
+    """变异系数 % = 样本标准差 / 均值 * 100。少于 2 个样本返回 None。"""
+    vals = [v for v in values if v is not None]
+    if len(vals) < 2:
+        return None
+    m = sum(vals) / len(vals)
+    if not m:
+        return None
+    return round(statistics.stdev(vals) * 100 / m, 1)
+
+
+def read_launch_window(directory):
+    """读取 launch_window.txt 的 started_at/ended_at（host epoch 秒）。"""
+    path = os.path.join(directory, "launch_window.txt")
+    started = ended = None
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("started_at="):
+                    started = to_int(line.split("=", 1)[1])
+                elif line.startswith("ended_at="):
+                    ended = to_int(line.split("=", 1)[1])
+    return started, ended
+
+
+def summarize_timeline(directory):
+    """汇总该设备 launch 窗口内的系统状态；无 timeline 返回 None。"""
+    rows = read_csv_rows(os.path.join(directory, "timeline", "timeline.csv"))
+    if not rows:
+        return None
+    started, ended = read_launch_window(directory)
+    if started and ended:
+        windowed = [
+            r for r in rows
+            if (to_int(r.get("epoch")) or 0) >= started and (to_int(r.get("epoch")) or 0) <= ended
+        ]
+        rows = windowed or rows  # 窗口内无采样点时退回整段，避免空表
+        window_label = f"{started}->{ended}"
+    else:
+        window_label = "full"
+
+    govs, cur_freqs, iowaits, thermals, dex2oat = set(), [], [], [], []
+    for r in rows:
+        for key, val in r.items():
+            if key.endswith("_governor") and val:
+                govs.add(val)
+            elif key.endswith("_cur_freq"):
+                iv = to_int(val)
+                if iv is not None:
+                    cur_freqs.append(iv)
+        iw = to_float(r.get("iowait_pct"))
+        if iw is not None:
+            iowaits.append(iw)
+        tv = to_int(r.get("thermal_max_temp"))
+        if tv is not None:
+            thermals.append(tv)
+        dv = to_int(r.get("dex2oat_count"))
+        if dv is not None:
+            dex2oat.append(dv)
+    return {
+        "samples": len(rows),
+        "window": window_label,
+        "governors": ",".join(sorted(govs)),
+        "cur_freq_max": max(cur_freqs) if cur_freqs else None,
+        "iowait_mean": round(sum(iowaits) / len(iowaits), 1) if iowaits else None,
+        "iowait_max": round(max(iowaits), 1) if iowaits else None,
+        "thermal_max": max(thermals) if thermals else None,
+        "dex2oat_max": max(dex2oat) if dex2oat else None,
+    }
 
 
 def find_optional_single(directory, rel_dir, prefix, suffix):
@@ -150,6 +233,14 @@ def strict_pkg_summary(device, pkg):
         "rmonitor_target_pid_avg": avg_field("rmonitor_target_pid"),
         "shadowhook_target_pid_avg": avg_field("shadowhook_target_pid"),
         "bugly_target_pid_avg": avg_field("bugly_target_pid"),
+        "total_cv_pct": cv_pct(totals),
+        "total_min_ms": min(totals) if totals else None,
+        "total_max_ms": max(totals) if totals else None,
+        "cold_window_ms_avg": avg_field("cold_window_ms"),
+        "hook_hits_in_window_avg": avg_field("hook_hits_in_window"),
+        "hook_main_hits_in_window_avg": avg_field("hook_main_hits_in_window"),
+        "hook_worker_hits_in_window_avg": avg_field("hook_worker_hits_in_window"),
+        "hook_main_span_ms_avg": avg_field("hook_main_span_ms"),
         "metadata_note": ";".join(sorted({r.get("metadata_note", "") for r in rows if r.get("metadata_note", "")})),
     }
 
@@ -193,6 +284,7 @@ def build_device(label, directory):
         "dex": read_csv_map(os.path.join(directory, "dexopt_before.csv"), "pkg"),
         "apk": read_csv_map(os.path.join(directory, "apk_versions_before.csv"), "pkg"),
         "strict": build_strict_attempts(directory),
+        "hook": build_detail_hook(directory),
         "sha": {},
     }
     sha_path = os.path.join(directory, "apk_sha256_before.csv")
@@ -201,228 +293,219 @@ def build_device(label, directory):
     return device
 
 
-def make_three_sheet(wb, devices):
-    ws = wb.active
-    ws.title = "三设备共同app"
-    labels = [d["label"] for d in devices]
-    ws.append([
-        "package", "activity",
-        f"{labels[0]}_avg", f"{labels[1]}_avg", f"{labels[2]}_avg",
-        f"{labels[1]}-{labels[0]}_avg_delta",
-        f"{labels[2]}-{labels[0]}_avg_delta",
-        f"{labels[2]}-{labels[1]}_avg_delta",
-        f"{labels[0]}_t1", f"{labels[1]}_t1", f"{labels[2]}_t1",
-        f"{labels[1]}-{labels[0]}_t1_delta",
-        f"{labels[0]}_warm_t2_t5", f"{labels[1]}_warm_t2_t5", f"{labels[2]}_warm_t2_t5",
-        f"{labels[1]}-{labels[0]}_warm_delta",
-        f"{labels[0]}_dexopt", f"{labels[1]}_dexopt", f"{labels[2]}_dexopt",
-        f"{labels[0]}_version", f"{labels[1]}_version", f"{labels[2]}_version",
-        "apk_sha256_same_all3",
-    ])
-    pkgs = set(devices[0]["launch"])
-    for device in devices[1:]:
-        pkgs &= set(device["launch"])
-    common = [
-        pkg for pkg in sorted(pkgs)
-        if all(device["launch"][pkg].get("status") == "ok" for device in devices)
-    ]
-    for pkg in common:
-        rows = [device["launch"][pkg] for device in devices]
-        warm = [warm_avg(row) for row in rows]
-        shas = [sha_state(device, pkg) for device in devices]
-        ws.append([
-            pkg, rows[0].get("activity", ""),
-            rows[0]["avg"], rows[1]["avg"], rows[2]["avg"],
-            rows[1]["avg"] - rows[0]["avg"],
-            rows[2]["avg"] - rows[0]["avg"],
-            rows[2]["avg"] - rows[1]["avg"],
-            rows[0]["t1"], rows[1]["t1"], rows[2]["t1"],
-            rows[1]["t1"] - rows[0]["t1"],
-            warm[0], warm[1], warm[2],
-            round(warm[1] - warm[0], 1) if warm[0] is not None and warm[1] is not None else None,
-            dex_state(devices[0], pkg), dex_state(devices[1], pkg), dex_state(devices[2], pkg),
-            version_state(devices[0], pkg), version_state(devices[1], pkg), version_state(devices[2], pkg),
-            len(set(shas)) == 1 and bool(shas[0]),
-        ])
-    return common
+# ---------- 通用辅助 ----------
+def dex_filter(device, pkg):
+    """仅 dexopt 编译级别(filter)，不含 reason。"""
+    return (device["dex"].get(pkg, {}) or {}).get("filter", "").strip()
 
 
-def make_strict_aligned_sheet(wb, devices):
-    ws = wb.create_sheet("严格可比共同app"[:31])
-    labels = [d["label"] for d in devices]
-    header = [
-        "package",
-        "activity",
-        "component",
-        "displayed_activity",
-        "dexopt",
-        "version",
-        "apk_sha256",
-    ]
-    for label in labels:
-        header.extend([
-            f"{label}_strict_count",
-            f"{label}_total_avg_ms",
-            f"{label}_displayed_avg_ms",
-            f"{label}_keyword_target_pid_avg",
-            f"{label}_bytehook_target_pid_avg",
-            f"{label}_rmonitor_target_pid_avg",
-            f"{label}_shadowhook_target_pid_avg",
-            f"{label}_bugly_target_pid_avg",
-            f"{label}_metadata_note",
-        ])
-    if len(devices) >= 2:
-        header.extend([
-            f"{labels[1]}-{labels[0]}_total_delta",
-            f"{labels[1]}-{labels[0]}_displayed_delta",
-            f"{labels[1]}_vs_{labels[0]}_pct",
-        ])
-    ws.append(header)
+def wide_cv(launch_row):
+    """从宽表 t1..t5 计算 CV%。"""
+    vals = [launch_row.get(k) for k in ("t1", "t2", "t3", "t4", "t5") if launch_row.get(k) is not None]
+    return cv_pct(vals)
 
+
+def build_detail_hook(directory):
+    """从 attempts detail CSV 聚合每个 app 的主线程 hook 命中/时长(均值)，覆盖全部 app(不限 strict)。"""
+    path = find_optional_single(directory, "launch_raw", "apps_launch_attempts_detail_", ".csv")
+    rows = read_csv_rows(path)
+    grouped = {}
+    for row in rows:
+        pkg = row.get("package")
+        if pkg:
+            grouped.setdefault(pkg, []).append(row)
+    out = {}
+    for pkg, rs in grouped.items():
+        def avg(field):
+            vals = [v for v in (to_int(r.get(field)) for r in rs) if v is not None]
+            return mean(vals)
+        out[pkg] = {
+            "main": avg("hook_main_hits_in_window"),
+            "span": avg("hook_main_span_ms"),
+        }
+    return out
+
+
+def compute_strict_common(devices):
+    """各设备都 strict 且 启动入口/Displayed/dexopt/version/sha 全对齐的 app 集合。
+    返回 (pkg 列表, {pkg: [各设备 strict_pkg_summary]})。"""
     pkgs = set(devices[0]["strict"])
     for device in devices[1:]:
         pkgs &= set(device["strict"])
-
-    strict_common = []
+    common, summaries_by_pkg = [], {}
     for pkg in sorted(pkgs):
         summaries = [strict_pkg_summary(device, pkg) for device in devices]
-        checks = [
-            [s["activity"] for s in summaries],
-            [s["component"] for s in summaries],
-            [s["displayed_activity"] for s in summaries],
-            [s["dexopt"] for s in summaries],
-            [s["version"] for s in summaries],
-            [s["sha"] for s in summaries],
-        ]
+        checks = [[s[k] for s in summaries] for k in
+                  ("activity", "component", "displayed_activity", "dexopt", "version", "sha")]
         if not all(values_aligned(values) for values in checks):
             continue
         if any(s["total_avg_ms"] is None or s["displayed_avg_ms"] is None for s in summaries):
             continue
-
-        strict_common.append(pkg)
-        row = [
-            pkg,
-            summaries[0]["activity"],
-            summaries[0]["component"],
-            summaries[0]["displayed_activity"],
-            summaries[0]["dexopt"],
-            summaries[0]["version"],
-            summaries[0]["sha"],
-        ]
-        for summary in summaries:
-            row.extend([
-                summary["strict_count"],
-                summary["total_avg_ms"],
-                summary["displayed_avg_ms"],
-                summary["keyword_target_pid_avg"],
-                summary["bytehook_target_pid_avg"],
-                summary["rmonitor_target_pid_avg"],
-                summary["shadowhook_target_pid_avg"],
-                summary["bugly_target_pid_avg"],
-                summary["metadata_note"],
-            ])
-        if len(devices) >= 2:
-            total_delta = summaries[1]["total_avg_ms"] - summaries[0]["total_avg_ms"]
-            displayed_delta = summaries[1]["displayed_avg_ms"] - summaries[0]["displayed_avg_ms"]
-            row.extend([
-                total_delta,
-                displayed_delta,
-                round(total_delta * 100 / summaries[0]["total_avg_ms"], 1) if summaries[0]["total_avg_ms"] else None,
-            ])
-        ws.append(row)
-
-    return strict_common
+        common.append(pkg)
+        summaries_by_pkg[pkg] = summaries
+    return common, summaries_by_pkg
 
 
-def make_pair_sheet(wb, left, right, name):
-    ws = wb.create_sheet(name[:31])
-    ws.append([
-        "package", "activity",
-        f"{left['label']}_status", f"{right['label']}_status",
-        f"{left['label']}_avg", f"{right['label']}_avg",
-        f"{right['label']}-{left['label']}_avg_delta",
-        f"{right['label']}_vs_{left['label']}_pct",
-        f"{left['label']}_t1", f"{right['label']}_t1",
-        f"{right['label']}-{left['label']}_t1_delta",
-        f"{left['label']}_warm_t2_t5", f"{right['label']}_warm_t2_t5",
-        f"{right['label']}-{left['label']}_warm_delta",
-        f"{left['label']}_dexopt", f"{right['label']}_dexopt", "dexopt_same",
-        f"{left['label']}_version", f"{right['label']}_version", "version_same",
-        "apk_sha256_same",
-    ])
-    pkgs = set(left["launch"]) & set(right["launch"])
-    common = [
-        pkg for pkg in sorted(pkgs)
-        if left["launch"][pkg].get("status") == "ok" and right["launch"][pkg].get("status") == "ok"
-    ]
+# ---------- Sheet 1: overview（全共同 app 总览，第一个设备为基准）----------
+def make_overview(wb, devices, strict_set):
+    ws = wb.active
+    ws.title = "overview"
+    base = devices[0]
+    labels = [d["label"] for d in devices]
+    header = ["package"]
+    for label in labels:
+        header += [f"{label}_首启t1", f"{label}_5次均值", f"{label}_CV%",
+                   f"{label}_dexopt", f"{label}_主线程hook", f"{label}_hookSpan"]
+    for label in labels[1:]:
+        header += [f"{label}-{labels[0]}_Δms", f"{label}比{labels[0]}_%"]
+    header += ["版本一致", "严格可比"]
+    ws.append(header)
+
+    pkgs = set(base["launch"])
+    for device in devices[1:]:
+        pkgs &= set(device["launch"])
+    common = sorted(pkgs)
     for pkg in common:
-        lrow = left["launch"][pkg]
-        rrow = right["launch"][pkg]
-        lwarm = warm_avg(lrow)
-        rwarm = warm_avg(rrow)
-        avg_delta = rrow["avg"] - lrow["avg"]
-        ws.append([
-            pkg, lrow.get("activity", ""),
-            lrow.get("status"), rrow.get("status"),
-            lrow["avg"], rrow["avg"],
-            avg_delta,
-            round(avg_delta * 100 / lrow["avg"], 1) if lrow["avg"] else None,
-            lrow["t1"], rrow["t1"],
-            rrow["t1"] - lrow["t1"],
-            lwarm, rwarm,
-            round(rwarm - lwarm, 1) if lwarm is not None and rwarm is not None else None,
-            dex_state(left, pkg), dex_state(right, pkg), dex_state(left, pkg) == dex_state(right, pkg),
-            version_state(left, pkg), version_state(right, pkg), version_state(left, pkg) == version_state(right, pkg),
-            sha_state(left, pkg) == sha_state(right, pkg) and bool(sha_state(left, pkg)),
-        ])
+        row = [pkg]
+        for device in devices:
+            lr = device["launch"].get(pkg, {})
+            hk = device["hook"].get(pkg, {})
+            row += [lr.get("t1"), lr.get("avg"), wide_cv(lr),
+                    dex_filter(device, pkg), hk.get("main"), hk.get("span")]
+        base_avg = base["launch"].get(pkg, {}).get("avg")
+        for device in devices[1:]:
+            dev_avg = device["launch"].get(pkg, {}).get("avg")
+            if base_avg and dev_avg is not None:
+                row += [dev_avg - base_avg, round((dev_avg - base_avg) * 100 / base_avg, 1)]
+            else:
+                row += ["", ""]
+        vers = {version_state(d, pkg) for d in devices if version_state(d, pkg)}
+        row += ["是" if len(vers) == 1 else "否", "是" if pkg in strict_set else "否"]
+        ws.append(row)
     return common
 
 
-def make_summary(wb, devices, three_common, pair_common, strict_common):
+# ---------- Sheet 2: strict（严格可比共同 app，主结论口径 + 详细列）----------
+def make_strict(wb, devices, strict_common, summaries_by_pkg):
+    ws = wb.create_sheet("strict")
+    labels = [d["label"] for d in devices]
+    header = ["package", "component", "displayed_activity", "dexopt", "version", "apk_sha256"]
+    for label in labels:
+        header += [
+            f"{label}_strict数", f"{label}_5次均值", f"{label}_CV%",
+            f"{label}_min", f"{label}_max",
+            f"{label}_首启t1", f"{label}_温启t2_t5",
+            f"{label}_displayed均值", f"{label}_cold_window",
+            f"{label}_主线程hook", f"{label}_子线程hook", f"{label}_hookSpan",
+            f"{label}_keyword命中", f"{label}_bytehook", f"{label}_rmonitor",
+            f"{label}_shadowhook", f"{label}_bugly", f"{label}_note",
+        ]
+    for label in labels[1:]:
+        header += [f"{label}-{labels[0]}_Δms", f"{label}比{labels[0]}_%", f"{label}-{labels[0]}_Δdisplayed"]
+    ws.append(header)
+
+    base = devices[0]
+    for pkg in strict_common:
+        summaries = summaries_by_pkg[pkg]
+        s0 = summaries[0]
+        row = [pkg, s0["component"], s0["displayed_activity"], s0["dexopt"], s0["version"], s0["sha"]]
+        for device, s in zip(devices, summaries):
+            lr = device["launch"].get(pkg, {})
+            row += [
+                s["strict_count"], s["total_avg_ms"], s["total_cv_pct"],
+                s["total_min_ms"], s["total_max_ms"],
+                lr.get("t1"), warm_avg(lr),
+                s["displayed_avg_ms"], s["cold_window_ms_avg"],
+                s["hook_main_hits_in_window_avg"], s["hook_worker_hits_in_window_avg"], s["hook_main_span_ms_avg"],
+                s["keyword_target_pid_avg"], s["bytehook_target_pid_avg"], s["rmonitor_target_pid_avg"],
+                s["shadowhook_target_pid_avg"], s["bugly_target_pid_avg"], s["metadata_note"],
+            ]
+        base_total = summaries[0]["total_avg_ms"]
+        for s in summaries[1:]:
+            total_delta = s["total_avg_ms"] - base_total
+            row += [
+                total_delta,
+                round(total_delta * 100 / base_total, 1) if base_total else None,
+                s["displayed_avg_ms"] - summaries[0]["displayed_avg_ms"],
+            ]
+        ws.append(row)
+
+
+# ---------- Sheet 3: system_state（系统状态对齐）----------
+def make_system_state(wb, devices):
+    ws = wb.create_sheet("system_state")
+    ws.append([
+        "device", "timeline_samples", "window_epoch", "governors",
+        "cur_freq_max", "iowait_mean_pct", "iowait_max_pct", "thermal_max", "dex2oat_max",
+    ])
+    valid = []
+    for device in devices:
+        s = summarize_timeline(device["dir"])
+        if s is None:
+            ws.append([device["label"], "timeline missing", "", "", "", "", "", "", ""])
+            continue
+        valid.append(s)
+        ws.append([
+            device["label"], s["samples"], s["window"], s["governors"],
+            s["cur_freq_max"], s["iowait_mean"], s["iowait_max"], s["thermal_max"], s["dex2oat_max"],
+        ])
+    if len(valid) >= 2:
+        ws.append([])
+        ws.append(["governor_aligned_all", len({s["governors"] for s in valid}) == 1])
+        ws.append([
+            "note",
+            "若各设备 governor 一致且 iowait/thermal/dex2oat 接近，可排除降频/限温/后台编译导致的设备级差异。",
+        ])
+
+
+# ---------- Sheet 4: summary（汇总，相对基准）----------
+def make_summary(wb, devices, overview_common, strict_common, summaries_by_pkg):
     ws = wb.create_sheet("summary")
     labels = [d["label"] for d in devices]
-    rows = [
-        ["three_device_common_ok_count", len(three_common)],
-        ["pair_common_ok_count", len(pair_common)],
-        ["strict_aligned_common_count", len(strict_common)],
-    ]
-    if len(devices) >= 2:
-        left, right = devices[0], devices[1]
-        for metric in ("avg", "t1"):
-            for device in (left, right):
-                vals = [device["launch"][pkg][metric] for pkg in pair_common]
-                rows.append([f"pair_common_{device['label']}_{metric}_mean", mean(vals)])
-                rows.append([f"pair_common_{device['label']}_{metric}_median", median(vals)])
-        deltas = [right["launch"][pkg]["avg"] - left["launch"][pkg]["avg"] for pkg in pair_common]
-        rows.append([f"{right['label']}-{left['label']}_avg_mean_delta", mean(deltas)])
-        rows.append([f"{right['label']}-{left['label']}_avg_median_delta", median(deltas)])
-    if three_common:
-        for metric in ("avg", "t1"):
-            for device in devices:
-                vals = [device["launch"][pkg][metric] for pkg in three_common]
-                rows.append([f"three_common_{device['label']}_{metric}_mean", mean(vals)])
-                rows.append([f"three_common_{device['label']}_{metric}_median", median(vals)])
-    if strict_common and len(devices) >= 2:
-        left, right = devices[0], devices[1]
-        left_vals = [strict_pkg_summary(left, pkg)["total_avg_ms"] for pkg in strict_common]
-        right_vals = [strict_pkg_summary(right, pkg)["total_avg_ms"] for pkg in strict_common]
-        strict_deltas = [r - l for l, r in zip(left_vals, right_vals)]
-        rows.append([f"strict_{left['label']}_total_mean", mean(left_vals)])
-        rows.append([f"strict_{right['label']}_total_mean", mean(right_vals)])
-        rows.append([f"strict_{right['label']}-{left['label']}_total_mean_delta", mean(strict_deltas)])
-        rows.append([f"strict_{right['label']}-{left['label']}_total_median_delta", median(strict_deltas)])
-    rows.append(["device_order", " -> ".join(labels)])
-    add_rows(ws, rows)
+    base = devices[0]
+    ws.append(["metric", "value"])
+    ws.append(["baseline(基准设备)", labels[0]])
+    ws.append(["device_order", " -> ".join(labels)])
+    ws.append(["overview_common_count", len(overview_common)])
+    ws.append(["strict_common_count", len(strict_common)])
+    ws.append([])
+
+    def avg_metric(device, metric, pkgs):
+        vals = [device["launch"][pkg][metric] for pkg in pkgs
+                if device["launch"].get(pkg, {}).get(metric) is not None]
+        return mean(vals)
+
+    ws.append(["== overview 全共同 app（宽口径 5次均值/首启）=="])
+    for device in devices:
+        ws.append([f"{device['label']}_5次均值_mean", avg_metric(device, "avg", overview_common)])
+        ws.append([f"{device['label']}_首启t1_mean", avg_metric(device, "t1", overview_common)])
+    for device in devices[1:]:
+        deltas = [device["launch"][pkg]["avg"] - base["launch"][pkg]["avg"] for pkg in overview_common
+                  if base["launch"].get(pkg, {}).get("avg") and device["launch"].get(pkg, {}).get("avg") is not None]
+        ws.append([f"{device['label']}-{labels[0]}_Δ均值_mean", mean(deltas)])
+        ws.append([f"{device['label']}-{labels[0]}_Δ均值_median", median(deltas)])
+    ws.append([])
+
+    if strict_common:
+        ws.append([f"== strict 严格可比 app（主结论口径, n={len(strict_common)}）=="])
+        base_vals = [summaries_by_pkg[pkg][0]["total_avg_ms"] for pkg in strict_common]
+        for i, device in enumerate(devices):
+            vals = [summaries_by_pkg[pkg][i]["total_avg_ms"] for pkg in strict_common]
+            ws.append([f"strict_{device['label']}_5次均值_mean", mean(vals)])
+        for i, device in enumerate(devices[1:], start=1):
+            deltas = [summaries_by_pkg[pkg][i]["total_avg_ms"] - base_vals[j]
+                      for j, pkg in enumerate(strict_common)]
+            ws.append([f"strict_{device['label']}-{labels[0]}_Δ均值_mean", mean(deltas)])
+            ws.append([f"strict_{device['label']}-{labels[0]}_Δ均值_median", median(deltas)])
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="对比多台设备冷启动证据目录，输出标准 4-sheet XLSX (overview/strict/system_state/summary)。"
+                    "第一个 --device 为基准，所有差值相对基准。")
     parser.add_argument(
-        "--device",
-        action="append",
-        required=True,
-        help="LABEL=/path/to/evidence_dir. Provide 2 or 3 devices.",
-    )
+        "--device", action="append", required=True,
+        help="LABEL=/path/to/evidence_dir，可给 2 台或更多；第一个为基准。")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -432,20 +515,17 @@ def main():
             parser.error("--device must be LABEL=/path")
         label, directory = item.split("=", 1)
         devices.append(build_device(label, directory))
-    if len(devices) not in (2, 3):
-        parser.error("provide 2 or 3 --device entries")
+    if len(devices) < 2:
+        parser.error("至少提供 2 台 --device")
+
+    strict_common, summaries_by_pkg = compute_strict_common(devices)
+    strict_set = set(strict_common)
 
     wb = Workbook()
-    if len(devices) == 3:
-        three_common = make_three_sheet(wb, devices)
-        pair_common = make_pair_sheet(wb, devices[0], devices[1], f"{devices[1]['label']}_{devices[0]['label']}共同app")
-    else:
-        wb.active.title = "placeholder"
-        wb.remove(wb.active)
-        three_common = []
-        pair_common = make_pair_sheet(wb, devices[0], devices[1], f"{devices[1]['label']}_{devices[0]['label']}共同app")
-    strict_common = make_strict_aligned_sheet(wb, devices)
-    make_summary(wb, devices, three_common, pair_common, strict_common)
+    overview_common = make_overview(wb, devices, strict_set)
+    make_strict(wb, devices, strict_common, summaries_by_pkg)
+    make_system_state(wb, devices)
+    make_summary(wb, devices, overview_common, strict_common, summaries_by_pkg)
     style_workbook(wb)
     wb.save(args.out)
     print(args.out)

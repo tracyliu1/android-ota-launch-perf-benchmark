@@ -219,6 +219,7 @@ BETWEEN_ATTEMPT_SLEEP_SEC=10  # 两次启动 attempt 之间等待；未设置时
 LOGCAT_CAPTURE_SEC=5          # am start 返回后继续抓启动窗口 logcat 的秒数
 FULL_LOGCAT=0                 # 0=默认低成本 filtered logcat；1=深挖时保存完整 per-attempt logcat
 KEYWORD_PATTERNS="bytehook|rmonitor|shadowhook|bugly|eup|webview|chromium|SurfaceFlinger|C2MtkBufferManager"  # 候选怀疑项，不是归因结论
+HOOK_KEYWORDS="bytehook|rmonitor|shadowhook"  # hook 线程级归因专用（窗口内主线程/子线程命中、时间跨度）
 TIMELINE_INTERVAL_SEC=10      # timeline 采样间隔（秒）
 DEVICE_TMPDIR="/data/local/tmp/ota_perf_benchmark"
 HAS_VAB=true                  # 设备是否使用 VAB 分区
@@ -454,9 +455,16 @@ python3 scripts/08_compare_launch_results.py \
   --out evidence/0624_tri/launch_compare.xlsx
 ```
 
-报告会输出共同成功 App、两两差异、dexopt join、版本 join；如果存在 `apk_sha256_before.csv`，也会把 APK 哈希一致性放进去。
+**第一个 `--device` 为基准**，所有差值都相对基准。报告固定输出 4 个 sheet：
 
-如果输入目录中存在 `included_strict_<T>.csv`，报告还会新增 `严格可比共同app` sheet。该 sheet 只保留多设备都满足 strict attempt，且启动入口、最终 Displayed Activity、APK version、APK sha256、dexopt `filter/reason` 全部一致的 App，用作主结论口径；旧的共同 App sheet 保留为宽口径参考。
+| sheet | 内容 | 口径 |
+|------|------|------|
+| **overview** | 全部共同 app 总览：每台 `首启t1 / 5次均值 / CV% / dexopt / 主线程hook / hookSpan`，非基准设备附 `Δms / Δ%`，并标 `版本一致 / 严格可比` | 宽口径（5 次全算） |
+| **strict** | 严格可比共同 app（主结论口径）+ 详细列：component/displayed/dexopt(filter+reason)/version/sha、每台 strict 数/均值/CV/min/max/首启/温启/displayed/cold_window/主线程hook/子线程hook/span/关键字命中，非基准设备附 Δ | 仅各设备都满足 strict、且启动入口/Displayed/version/sha/dexopt 全对齐的 app |
+| **system_state** | 每台 timeline 窗口内 governor / cur_freq / iowait / thermal / dex2oat 汇总，判断是否降频/限温/后台编译 | phase 级 |
+| **summary** | 共同数、strict 数、各设备均值与相对基准 Δ（mean/median） | 汇总 |
+
+`主线程hook / hookSpan` 只有当 attempt detail 里有对应数据时才填（无 hook 的项目自然为空）。做主结论请优先看 **strict** sheet；overview 是宽口径参考。
 
 ---
 

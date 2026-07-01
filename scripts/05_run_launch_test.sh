@@ -18,6 +18,8 @@ COUNT="${LAUNCH_COUNT:-5}"
 SLEEP_SEC="${BETWEEN_ATTEMPT_SLEEP_SEC:-${LAUNCH_INTERVAL:-10}}"
 LOGCAT_CAPTURE="${LOGCAT_CAPTURE_SEC:-5}"
 FULL_LOGCAT="${FULL_LOGCAT:-0}"
+# hook 线程级归因专用关键字（与宽口径 KEYWORD_PATTERNS 区分；只针对怀疑的 hook/监控库）
+HOOK_KEYWORDS="${HOOK_KEYWORDS:-bytehook|rmonitor|shadowhook}"
 
 parse_phase_args "$@"
 require_phase
@@ -90,6 +92,62 @@ count_keyword() {
     local file="$1"
     local pattern="$2"
     { grep -E -i -o "$pattern" "$file" 2>/dev/null || true; } | wc -l | tr -d ' '
+}
+
+# 基于 logcat(threadtime) 时间戳 + TID 做 hook 归因。
+# 输出以 '|' 分隔的 7 个字段（缺失留空）：
+#   cold_window_ms|hook_hits_in_window|hook_hits_after_displayed|
+#   hook_main_hits_in_window|hook_worker_hits_in_window|hook_main_span_ms|hook_first_offset_ms
+# 口径：
+#   - 冷启动窗口 = [目标进程 Start proc 时间, 该 pkg 首条 Displayed 时间]
+#   - 主线程 = hook 行 TID($4) == 目标进程 PID；子线程 = $3==pid 且 $4!=pid
+#   - 只统计 $3==pid（确属目标进程）的 hook 行，排除其他进程噪声
+compute_hook_attribution() {
+    local file="$1" pkg="$2" pid="$3" hookre="$4"
+    if [ -z "$pid" ]; then
+        printf '||||||\n'
+        return 0
+    fi
+    awk -v pid="$pid" -v pkg="$pkg" -v hookre="$hookre" '
+    function toms(t,   a) {
+        if (t !~ /^[0-9]+:[0-9]+:[0-9]+\.[0-9]+$/) return -1
+        split(t, a, ":")
+        return ((a[1]*60)+a[2])*60000 + a[3]*1000
+    }
+    { t = toms($2) }
+    index($0, "ActivityManager: Start proc " pid ":" pkg) > 0 && start=="" { start = t }
+    index($0, "ActivityTaskManager: Displayed " pkg "/") > 0 && disp=="" { disp = t }
+    ($3 == pid && $0 ~ hookre) {
+        n++
+        ev_ts[n] = t
+        ev_main[n] = ($4 == pid) ? 1 : 0
+    }
+    END {
+        cw=""; hin=0; haft=0; mainin=0; workin=0; span=""; foff=""
+        if (start != "" && disp != "") cw = disp - start
+        minm=""; maxm=""; minin=""
+        for (i = 1; i <= n; i++) {
+            ts = ev_ts[i]
+            if (ts < 0) continue
+            if (start != "" && disp != "" && ts >= start && ts <= disp) {
+                hin++
+                if (minin == "" || ts < minin) minin = ts
+                if (ev_main[i]) {
+                    mainin++
+                    if (minm == "" || ts < minm) minm = ts
+                    if (maxm == "" || ts > maxm) maxm = ts
+                } else {
+                    workin++
+                }
+            } else if (disp != "" && ts > disp) {
+                haft++
+            }
+        }
+        if (minm != "" && maxm != "") span = maxm - minm
+        if (minin != "" && start != "") foff = minin - start
+        printf "%s|%s|%s|%s|%s|%s|%s\n", cw, hin, haft, mainin, workin, span, foff
+    }
+    ' "$file" 2>/dev/null || printf '||||||\n'
 }
 
 extract_field() {
@@ -206,7 +264,7 @@ KEYWORD_CSV_OUT="$OUT_DIR/apps_launch_keyword_summary_${PHASE}.csv"
 } > "$CSV_OUT"
 
 echo "package,activity,attempt,attempt_start_epoch,attempt_start_iso,attempt_end_epoch,attempt_end_iso,total_time_ms,status,error" > "$ATTEMPT_CSV_OUT"
-echo "package,activity,component,attempt,attempt_start_epoch,attempt_start_iso,attempt_end_epoch,attempt_end_iso,status,launch_state,am_activity,total_time_ms,wait_time_ms,displayed_activity,displayed_time_ms,first_start_activity,final_start_activity,start_chain,target_pid,keyword_total,keyword_target_pid,bytehook_total,bytehook_target_pid,rmonitor_total,rmonitor_target_pid,shadowhook_total,shadowhook_target_pid,bugly_total,bugly_target_pid,evidence_logcat,full_logcat,am_raw,error" > "$DETAIL_CSV_OUT"
+echo "package,activity,component,attempt,attempt_start_epoch,attempt_start_iso,attempt_end_epoch,attempt_end_iso,status,launch_state,am_activity,total_time_ms,wait_time_ms,displayed_activity,displayed_time_ms,first_start_activity,final_start_activity,start_chain,target_pid,keyword_total,keyword_target_pid,bytehook_total,bytehook_target_pid,rmonitor_total,rmonitor_target_pid,shadowhook_total,shadowhook_target_pid,bugly_total,bugly_target_pid,evidence_logcat,full_logcat,am_raw,error,cold_window_ms,hook_hits_in_window,hook_hits_after_displayed,hook_main_hits_in_window,hook_worker_hits_in_window,hook_main_span_ms,hook_first_offset_ms" > "$DETAIL_CSV_OUT"
 echo "package,activity,attempt,target_pid,keyword_total,keyword_target_pid,bytehook_total,bytehook_target_pid,rmonitor_total,rmonitor_target_pid,shadowhook_total,shadowhook_target_pid,bugly_total,bugly_target_pid" > "$KEYWORD_CSV_OUT"
 
 log_info "Starting launch tests..."
@@ -253,11 +311,11 @@ while IFS= read -r line || [ -n "$line" ]; do
             echo "activity=$act_raw"
             echo "component=$component"
             echo "attempt=$i"
-            adb -s "$SERIAL" shell "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n '$component'"
+            adb -s "$SERIAL" shell "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n '$component'" </dev/null
         } > "$am_raw" 2>&1 || true
 
         sleep "$LOGCAT_CAPTURE"
-        adb -s "$SERIAL" logcat -d -v threadtime > "$tmp_log" 2>&1 || true
+        adb -s "$SERIAL" logcat -d -v threadtime </dev/null > "$tmp_log" 2>&1 || true
         attempt_end=$(ts_epoch)
         attempt_end_iso=$(ts_iso)
 
@@ -304,6 +362,12 @@ while IFS= read -r line || [ -n "$line" ]; do
             shadowhook_target="$(count_keyword "$pid_log" "shadowhook")"
             bugly_target="$(count_keyword "$pid_log" "bugly|eup")"
         fi
+
+        # hook 线程级 + 时间级归因（基于 logcat 时间戳与 TID）
+        hook_attr="$(compute_hook_attribution "$tmp_log" "$pkg" "$target_pid" "$HOOK_KEYWORDS")"
+        IFS='|' read -r cold_window_ms hook_hits_in_window hook_hits_after_displayed \
+            hook_main_hits_in_window hook_worker_hits_in_window hook_main_span_ms hook_first_offset_ms \
+            <<< "$hook_attr"
 
         err=""
         attempt_status="ok"
@@ -357,7 +421,11 @@ while IFS= read -r line || [ -n "$line" ]; do
             csv_escape "$evidence_log"; printf ','
             csv_escape "$full_log"; printf ','
             csv_escape "$am_raw"; printf ','
-            csv_escape "$err"; printf '\n'
+            csv_escape "$err"; printf ','
+            printf '%s,%s,%s,%s,%s,%s,%s\n' \
+                "${cold_window_ms:-}" "${hook_hits_in_window:-}" "${hook_hits_after_displayed:-}" \
+                "${hook_main_hits_in_window:-}" "${hook_worker_hits_in_window:-}" \
+                "${hook_main_span_ms:-}" "${hook_first_offset_ms:-}"
         } >> "$DETAIL_CSV_OUT"
 
         printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
