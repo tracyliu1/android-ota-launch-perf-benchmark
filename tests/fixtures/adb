@@ -1,0 +1,41 @@
+#!/bin/bash
+
+set -euo pipefail
+
+if [ "${1:-}" = "devices" ]; then
+    cat <<'EOF'
+List of devices attached
+SERIAL_A	device
+SERIAL_B	device
+EOF
+    exit 0
+fi
+
+if [ "${1:-}" = "-s" ]; then
+    shift 2
+fi
+
+if [ "${1:-}" != "shell" ]; then
+    exit 0
+fi
+
+command_text="${*:2}"
+case "$command_text" in
+    *"cat /proc/loadavg"*)
+        echo "0.10 0.20 0.30 1/100 123"
+        ;;
+    *"cat /proc/meminfo"*)
+        printf 'MemTotal: 4096000 kB\nMemAvailable: 2048000 kB\n'
+        ;;
+    *"cat /proc/stat"*)
+        echo "cpu 100 0 50 1000 5 0 0 0 0 0"
+        ;;
+    *"dumpsys battery"*)
+        printf 'AC powered: false\nUSB powered: true\nWireless powered: false\nMax charging current: 1000000\nlevel: 80\ntemperature: 300\n'
+        ;;
+    *"getprop ro.product.model"*)
+        echo "FakeDevice"
+        ;;
+esac
+
+exit 0

@@ -89,6 +89,11 @@ evidence/0617/<device-tag>_T1_Demo/
 EVIDENCE_DEVICE_TAG=MyDevice bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 ```
 
+多台设备可以在同一 checkout 中并发执行同一个 phase。每个命令必须显式设置各自的
+`ANDROID_SERIAL`（或 `DEVICE_SERIAL`）和 `EVIDENCE_DEVICE_TAG`。两台设备可以共用
+同一个 `EVIDENCE_RUN_TAG` 和 phase；timeline 的 host 端 PID、日志和临时 CSV 会按
+run tag、设备和 phase 隔离。
+
 ### 5. 分析
 
 ```bash

@@ -91,6 +91,11 @@ The `device-tag` is detected from adb device properties by default. You can over
 EVIDENCE_DEVICE_TAG=MyDevice bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
 ```
 
+Multiple devices may run the same phase concurrently from one checkout. Each command must set its
+own `ANDROID_SERIAL` (or `DEVICE_SERIAL`) and `EVIDENCE_DEVICE_TAG`. Devices may share the same
+`EVIDENCE_RUN_TAG` and phase; host-side timeline PID, log, and temporary CSV files are namespaced
+by run tag, device, and phase.
+
 ### 5. Analyze
 
 ```bash

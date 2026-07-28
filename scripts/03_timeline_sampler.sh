@@ -42,8 +42,10 @@ if [ -z "$ACTION" ]; then
     exit 2
 fi
 
-PID_FILE="$INVESTIGATION_ROOT/.timeline_sampler_${PHASE}.pid"
-LOG_FILE="$INVESTIGATION_ROOT/.timeline_sampler_${PHASE}.log"
+SCRATCH_KEY="$(host_scratch_key "$PHASE")"
+PID_FILE="$INVESTIGATION_ROOT/.timeline_sampler_${SCRATCH_KEY}.pid"
+LOG_FILE="$INVESTIGATION_ROOT/.timeline_sampler_${SCRATCH_KEY}.log"
+CSV_FILE="$INVESTIGATION_ROOT/.timeline_${SCRATCH_KEY}.csv"
 
 TIMELINE_INTERVAL_SEC="${TIMELINE_INTERVAL_SEC:-30}"
 
@@ -229,16 +231,15 @@ if [ "$ACTION" = "start" ]; then
     fi
 
     SERIAL=$(get_device_serial) || exit 1
-    log_info "Starting timeline sampler for phase=$PHASE (interval=${TIMELINE_INTERVAL_SEC}s)"
+    log_info "Starting timeline sampler for phase=$PHASE target=$(device_tag) (interval=${TIMELINE_INTERVAL_SEC}s)"
 
     # 启动后台采样进程
     (
         # 写 CSV header
-        out_tmp="$INVESTIGATION_ROOT/.timeline_${PHASE}.csv"
-        timeline_header > "$out_tmp"
+        timeline_header > "$CSV_FILE"
 
         while true; do
-            timeline_tick >> "$out_tmp" 2>/dev/null || true
+            timeline_tick >> "$CSV_FILE" 2>/dev/null || true
             sleep "$TIMELINE_INTERVAL_SEC"
         done
     ) >"$LOG_FILE" 2>&1 &
@@ -267,7 +268,7 @@ elif [ "$ACTION" = "stop" ]; then
     rm -f "$PID_FILE"
 
     # 归档
-    src="$INVESTIGATION_ROOT/.timeline_${PHASE}.csv"
+    src="$CSV_FILE"
     dst="$(phase_dir "$PHASE")/timeline"
     ensure_dir "$dst"
     if [ -f "$src" ]; then

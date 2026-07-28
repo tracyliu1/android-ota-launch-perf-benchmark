@@ -144,6 +144,25 @@ phase_dir() {
     echo "$(evidence_run_dir)/$(phase_tag "$1")"
 }
 
+# Host-side runtime files must be isolated as strictly as evidence directories.
+# In particular, concurrent devices may intentionally use the same phase name.
+host_scratch_key() {
+    local phase="$1"
+    local run_tag
+    local target
+
+    run_tag="$(sanitize_tag "$EVIDENCE_RUN_TAG")"
+    if [ -n "${EVIDENCE_DEVICE_TAG:-}" ]; then
+        target="$(sanitize_tag "$EVIDENCE_DEVICE_TAG")"
+    elif [ -n "${ANDROID_SERIAL:-${DEVICE_SERIAL:-}}" ]; then
+        target="$(sanitize_tag "${ANDROID_SERIAL:-${DEVICE_SERIAL:-}}")"
+    else
+        target="$(device_tag)"
+    fi
+
+    printf '%s__%s__%s\n' "$run_tag" "$target" "$(sanitize_tag "$phase")"
+}
+
 # ---------- 设备相关 ----------
 get_device_serial() {
     local target_serial="${ANDROID_SERIAL:-${DEVICE_SERIAL:-}}"

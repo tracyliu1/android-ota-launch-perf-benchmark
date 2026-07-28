@@ -32,7 +32,8 @@ if [ -z "$ACTION" ]; then
     exit 2
 fi
 
-PID_FILE="$INVESTIGATION_ROOT/.logcat_recorder_${PHASE}.pid"
+SCRATCH_KEY="$(host_scratch_key "$PHASE")"
+PID_FILE="$INVESTIGATION_ROOT/.logcat_recorder_${SCRATCH_KEY}.pid"
 
 if [ "$ACTION" = "start" ]; then
     [ -n "$PHASE" ] || { log_err "--start requires --phase"; exit 2; }
