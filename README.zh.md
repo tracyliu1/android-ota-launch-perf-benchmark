@@ -94,6 +94,51 @@ EVIDENCE_DEVICE_TAG=MyDevice bash 06_run_phase_with_timeline.sh --phase T1_Demo 
 同一个 `EVIDENCE_RUN_TAG` 和 phase；timeline 的 host 端 PID、日志和临时 CSV 会按
 run tag、设备和 phase 隔离。
 
+这里的并行能力仅指本仓库的一轮 App Launch phase 及其 host 端 timeline/logcat 采样；
+它不代表上层 ADPB 的所有测试模块（例如 Compound）都已具备并行执行能力。
+
+并行运行的前置条件：
+
+- 每个进程绑定一个不同的在线设备 serial；推荐只设置 `ANDROID_SERIAL`。如果同时设置
+  `ANDROID_SERIAL` 和 `DEVICE_SERIAL`，两者必须指向同一台设备。
+- 每个设备使用不同且在本轮运行期间保持不变的 `EVIDENCE_DEVICE_TAG`。它既用于正式
+  evidence 目录，也参与 host 临时文件隔离。
+- `EVIDENCE_RUN_TAG` 和 phase 可以相同；需要区分重复批次时，再更换
+  `EVIDENCE_RUN_TAG`。
+
+例如，在两个终端中分别执行：
+
+```bash
+ANDROID_SERIAL=<A_SN> EVIDENCE_DEVICE_TAG=<A_SN> EVIDENCE_RUN_TAG=0729_parallel \
+  bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
+
+ANDROID_SERIAL=<B_SN> EVIDENCE_DEVICE_TAG=<B_SN> EVIDENCE_RUN_TAG=0729_parallel \
+  bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
+```
+
+#### 并行采样升级与兼容性说明
+
+并行隔离只改变 host 端 timeline/logcat 采样器的临时文件名，不改变正式 evidence
+目录、App Launch 执行次数、统计口径或指标。标准的
+`06_run_phase_with_timeline.sh` 会在同一条命令内启动和停止采样，原有单设备用法无需
+调整，历史 evidence 也无需迁移。
+
+升级后需要注意以下边界：
+
+- 临时文件现在使用 `<EVIDENCE_RUN_TAG>__<DEVICE_TAG或SN>__<PHASE>` 命名空间，
+  不再只按 phase 命名。
+- 如果手动分开执行采样器的 `--start` 和 `--stop`，两次操作必须使用相同的
+  `EVIDENCE_RUN_TAG`、`EVIDENCE_DEVICE_TAG`（未设置时使用设备 serial）和 phase，
+  否则 `--stop` 无法找到对应的 PID 文件。
+- 不要在 timeline 或 logcat 采样器运行期间切换到包含此变更的新旧版本；应先用启动
+  该采样器的版本停止采样，再更新代码。
+- 仓库外如果有脚本直接读取旧的 `.timeline_sampler_<PHASE>.pid`、
+  `.timeline_<PHASE>.csv` 或 `.logcat_recorder_<PHASE>.pid`，需要改为使用新的设备
+  命名空间，或者改由仓库提供的标准脚本管理采样生命周期。
+- 未显式设置 `EVIDENCE_DEVICE_TAG` 或设备 serial 时，脚本需要从在线设备推导命名空间。
+  因此建议始终显式设置设备 serial；否则设备在手动 `--stop` 前掉线时，脚本可能无法
+  重新计算与 `--start` 相同的临时文件名。
+
 ### 5. 分析
 
 ```bash

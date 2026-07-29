@@ -96,6 +96,55 @@ own `ANDROID_SERIAL` (or `DEVICE_SERIAL`) and `EVIDENCE_DEVICE_TAG`. Devices may
 `EVIDENCE_RUN_TAG` and phase; host-side timeline PID, log, and temporary CSV files are namespaced
 by run tag, device, and phase.
 
+This parallel capability covers one App Launch phase in this repository and its host-side
+timeline/logcat sampling only. It does not imply that every module in an integrating ADPB suite,
+such as Compound, supports parallel execution.
+
+Prerequisites for parallel runs:
+
+- Bind each process to a different online device serial. Setting only `ANDROID_SERIAL` is
+  recommended. If both `ANDROID_SERIAL` and `DEVICE_SERIAL` are set, they must identify the same
+  device.
+- Give every device a distinct `EVIDENCE_DEVICE_TAG` and keep it unchanged for the run. The tag is
+  used for both the formal evidence directory and host-side temporary-file isolation.
+- `EVIDENCE_RUN_TAG` and phase may be shared. Change `EVIDENCE_RUN_TAG` when separating repeated
+  batches.
+
+For example, run these commands in separate terminals:
+
+```bash
+ANDROID_SERIAL=<A_SERIAL> EVIDENCE_DEVICE_TAG=<A_SERIAL> EVIDENCE_RUN_TAG=0729_parallel \
+  bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
+
+ANDROID_SERIAL=<B_SERIAL> EVIDENCE_DEVICE_TAG=<B_SERIAL> EVIDENCE_RUN_TAG=0729_parallel \
+  bash 06_run_phase_with_timeline.sh --phase T1_Demo -- -c 5 -s 10
+```
+
+#### Parallel Sampling Upgrade and Compatibility Notes
+
+The parallel-isolation change only renames temporary host-side timeline/logcat sampler files. It
+does not change the formal evidence layout, App Launch iteration count, measurement method, or
+metrics. The standard `06_run_phase_with_timeline.sh` command starts and stops sampling within the
+same invocation, so existing single-device usage remains unchanged. Historical evidence does not
+need migration.
+
+Observe these compatibility boundaries after upgrading:
+
+- Temporary files now use a `<EVIDENCE_RUN_TAG>__<DEVICE_TAG-or-SERIAL>__<PHASE>` namespace
+  instead of being keyed only by phase.
+- When running sampler `--start` and `--stop` manually as separate commands, both commands must use
+  the same `EVIDENCE_RUN_TAG`, `EVIDENCE_DEVICE_TAG` (or device serial when the tag is unset), and
+  phase. Otherwise `--stop` cannot locate the matching PID file.
+- Do not switch between revisions from before and after this change while a timeline or logcat
+  sampler is running. Stop it with the revision that started it before updating the checkout.
+- Out-of-tree scripts that read `.timeline_sampler_<PHASE>.pid`, `.timeline_<PHASE>.csv`, or
+  `.logcat_recorder_<PHASE>.pid` directly must adopt the new device namespace or delegate sampler
+  lifecycle management to the repository's standard scripts.
+- Without an explicit `EVIDENCE_DEVICE_TAG` or device serial, the scripts must derive the namespace
+  from an online device. Explicitly setting the serial is recommended; if the device disconnects
+  before a manual `--stop`, the script may be unable to reconstruct the same temporary filename
+  used by `--start`.
+
 ### 5. Analyze
 
 ```bash
